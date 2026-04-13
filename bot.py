@@ -1,5 +1,5 @@
 import discord
-from groq import Groq
+from groq import AsyncGroq
 import os
 import random
 import asyncio
@@ -22,8 +22,8 @@ if not GROQ_KEY or GROQ_KEY == "TA_CLE_API_GEMINI_ICI":
     print("ERREUR CRITIQUE: Tu n'as pas mis ta vraie clé Groq dans le fichier .env !")
     exit(1)
 
-# Client Groq
-client_ia = Groq(api_key=GROQ_KEY)
+# Client Groq Asynchrone (Évite de geler Discord !)
+client_ia = AsyncGroq(api_key=GROQ_KEY)
 MODEL_NAME = "llama-3.1-8b-instant" # Nouveau modèle Groq à jour et fonctionnel
 
 # --- CONFIGURATION JAMBON ---
@@ -93,30 +93,34 @@ async def generer_reponse(message, est_mentionne, prompt_special=None):
     if channel_id not in chat_sessions:
         chat_sessions[channel_id] = [{"role": "system", "content": system_instruction}]
     
-    chat_sessions[channel_id].append({"role": "user", "content": contenu_enrichi})
-    
-    # On limite l'historique pour ne pas exploser la limite de tokens Groq
-    if len(chat_sessions[channel_id]) > 15:
-        # On garde le system prompt, et on enlève les plus vieux messages
-        chat_sessions[channel_id] = [chat_sessions[channel_id][0]] + chat_sessions[channel_id][-14:]
+    # On prépare le message sans corrompre l'historique en cas d'erreur
+    temp_messages = list(chat_sessions[channel_id])
+    temp_messages.append({"role": "user", "content": contenu_enrichi})
 
     # --- BOUCLE DE RÉESSAI ---
-    max_essais = 5
+    max_essais = 3 # Réduit à 3 pour éviter les blocages trop longs
     delai_attente = 2
     for essai in range(max_essais):
         try:
             await asyncio.sleep(random.uniform(1, 3))
             
             async with message.channel.typing():
-                # Appel API Groq
-                chat_completion = client_ia.chat.completions.create(
-                    messages=chat_sessions[channel_id],
+                # Appel API Groq ASYNCHRONE (avec await)
+                chat_completion = await client_ia.chat.completions.create(
+                    messages=temp_messages,
                     model=MODEL_NAME,
                     temperature=0.7,
                 )
                 
                 reponse_texte = chat_completion.choices[0].message.content
+
+                # Si tout a fonctionné, on sauvegarde pour de vrai dans l'historique
+                chat_sessions[channel_id].append({"role": "user", "content": contenu_enrichi})
                 chat_sessions[channel_id].append({"role": "assistant", "content": reponse_texte})
+                
+                # On limite l'historique pour ne pas exploser la limite de tokens Groq
+                if len(chat_sessions[channel_id]) > 15:
+                    chat_sessions[channel_id] = [chat_sessions[channel_id][0]] + chat_sessions[channel_id][-14:]
                 
                 longueur_reponse = len(reponse_texte)
                 temps_frappe = max(2.0, min(10.0, longueur_reponse * 0.04)) 
@@ -171,7 +175,7 @@ async def presence_manager():
             channel = client.get_channel(last_channel_id)
             if channel:
                 try:
-                    res = client_ia.chat.completions.create(
+                    res = await client_ia.chat.completions.create(
                         messages=[
                             {"role": "system", "content": system_instruction},
                             {"role": "user", "content": "Dis que tu t'absentes vite fait (style Jambon gamer)."}
@@ -235,6 +239,11 @@ async def on_message(message):
 
     est_mentionne = client.user in message.mentions
     est_un_mp = message.guild is None
+
+    # ---- LOG DE DEBUG POUR TOI ----
+    if est_mentionne:
+        print(f"[DEBUG] Jambon a bien entendu le PING de {message.author.display_name} ! Je réfléchis...")
+    # -------------------------------
 
     if is_afk:
         if est_mentionne: pending_mentions.append(message)
