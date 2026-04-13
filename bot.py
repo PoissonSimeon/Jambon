@@ -23,9 +23,9 @@ if not GEMINI_KEY or GEMINI_KEY == "TA_CLE_API_GEMINI_ICI":
     print("ERREUR CRITIQUE: Tu n'as pas mis ta vraie clé Gemini dans le fichier .env !")
     exit(1)
 
-# Nouveau client Gemini (Nouvelle API)
+# Client Gemini (Nouvelle API)
 client_gemini = genai.Client(api_key=GEMINI_KEY)
-MODEL_NAME = "gemini-2.5-flash"
+MODEL_NAME = "gemini-2.5-flash" # Modèle fonctionnel sans carte bancaire
 
 # --- CONFIGURATION JAMBON ---
 LIMITE_QUOTA = 1500 
@@ -96,26 +96,41 @@ async def generer_reponse(message, est_mentionne, prompt_special=None):
     if channel_id not in chat_sessions:
         chat_sessions[channel_id] = client_gemini.chats.create(model=MODEL_NAME, config=config_gemini)
 
-    try:
-        await asyncio.sleep(random.uniform(1, 3))
-        
-        async with message.channel.typing():
-            response = chat_sessions[channel_id].send_message(contenu_enrichi)
+    # --- BOUCLE DE RÉESSAI (Gestion Erreur 503) ---
+    max_essais = 3
+    for essai in range(max_essais):
+        try:
+            await asyncio.sleep(random.uniform(1, 3))
             
-            longueur_reponse = len(response.text)
-            temps_frappe = max(2.0, min(10.0, longueur_reponse * 0.04)) 
-            await asyncio.sleep(temps_frappe)
-            
-            if est_mentionne:
-                await message.reply(response.text)
+            async with message.channel.typing():
+                response = chat_sessions[channel_id].send_message(contenu_enrichi)
+                
+                longueur_reponse = len(response.text)
+                temps_frappe = max(2.0, min(10.0, longueur_reponse * 0.04)) 
+                await asyncio.sleep(temps_frappe)
+                
+                if est_mentionne:
+                    await message.reply(response.text)
+                else:
+                    await message.channel.send(response.text)
+                
+                last_channel_id = channel_id
+                last_interaction_time = time.time()
+                break # Succès ! On sort de la boucle
+                
+        except Exception as e:
+            erreur_str = str(e)
+            if "503" in erreur_str or "UNAVAILABLE" in erreur_str:
+                if essai < max_essais - 1:
+                    print(f"Serveurs Google surchargés (503). Jambon réessaie dans 5s... (Essai {essai+1}/{max_essais})")
+                    await asyncio.sleep(5)
+                    continue
+                else:
+                    print("Impossible de joindre Google après 3 essais (Erreur 503).")
+                    break
             else:
-                await message.channel.send(response.text)
-            
-            last_channel_id = channel_id
-            last_interaction_time = time.time()
-            
-    except Exception as e:
-        print(f"Erreur IA : {e}")
+                print(f"Erreur IA non bloquante : {erreur_str}")
+                break
 
 # ==========================================
 # 3. TÂCHES DE FOND (COMPORTEMENT HUMAIN)
