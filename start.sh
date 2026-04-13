@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Script de démarrage et d'installation automatique pour le Bot Jambon
-# Conçu pour Debian 12 (Proxmox LXC) - Version Groq Sécurisée
+# Conçu pour Debian 12 (Proxmox LXC) - Version pure Gemini (Google-Genai)
 
 echo "🍖 Démarrage du script d'initialisation de Jambon..."
 
@@ -25,10 +25,10 @@ if [ ! -d "venv" ]; then
     python3 -m venv venv
 fi
 
-# 3. Installation des dépendances Python (sans le silence pour voir les erreurs)
-echo "Vérification et installation des paquets Python..."
+# 3. Installation des dépendances Python
+echo "Vérification et installation des paquets Python (discord.py, google-genai)..."
 venv/bin/pip install --upgrade pip
-venv/bin/pip install discord.py groq python-dotenv
+venv/bin/pip install discord.py google-genai python-dotenv
 
 # 4. Vérification du fichier .env
 if [ ! -f ".env" ]; then
@@ -37,10 +37,10 @@ if [ ! -f ".env" ]; then
     echo "Je viens de créer un modèle pour toi. Modifie-le avec tes clés API, puis relance ce script."
     echo ""
     echo "DISCORD_TOKEN=\"TON_TOKEN_DISCORD_ICI\"" > .env
-    echo "GROQ_API_KEY=\"TA_CLE_API_GROQ_ICI\"" >> .env
+    echo "GEMINI_API_KEY=\"TA_CLE_API_GEMINI_ICI\"" >> .env
     exit 1
 fi
 
-# 5. Lancement du bot via le venv explicitement
+# 5. Lancement du bot via le venv
 echo "🚀 Lancement de Jambon..."
 venv/bin/python bot.py
