@@ -1,5 +1,6 @@
 import discord
-from groq import AsyncGroq
+from google import genai
+from google.genai import types
 import os
 import random
 import asyncio
@@ -13,35 +14,43 @@ from discord.ext import tasks
 # ==========================================
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
-GROQ_KEY = os.getenv('GROQ_API_KEY')
+GEMINI_KEY = os.getenv('GEMINI_API_KEY')
 
 if not TOKEN or TOKEN == "TON_TOKEN_DISCORD_ICI":
-    print("ERREUR CRITIQUE: Tu n'as pas mis ton vrai Token Discord dans le fichier .env !")
+    print("ERREUR CRITIQUE: Token Discord manquant dans le fichier .env")
     exit(1)
-if not GROQ_KEY or GROQ_KEY == "TA_CLE_API_GROQ_ICI":
-    print("ERREUR CRITIQUE: Tu n'as pas mis ta vraie clé Groq dans le fichier .env !")
+if not GEMINI_KEY or GEMINI_KEY == "TA_CLE_API_GEMINI_ICI":
+    print("ERREUR CRITIQUE: Clé Gemini manquante dans le fichier .env")
     exit(1)
 
-# Client Groq Asynchrone
-client_ia = AsyncGroq(api_key=GROQ_KEY, timeout=15.0)
-
-# ON PASSE SUR LE GROS MODÈLE (70 Milliards de paramètres, ultra intelligent)
-MODEL_NAME = "llama-3.3-70b-versatile" 
+# Client Gemini (Nouvelle API, utilisation de .aio plus bas pour l'asynchrone)
+client_gemini = genai.Client(api_key=GEMINI_KEY)
+MODEL_NAME = "gemini-1.5-flash" # Strict respect du cahier des charges
 
 # --- CONFIGURATION JAMBON ---
-LIMITE_QUOTA = 14400 
+LIMITE_QUOTA = 1500 
 REQUETES_RESTANTES = LIMITE_QUOTA
 BOT_NAME = "Jambon"
 
 system_instruction = f"""
-Tu es {BOT_NAME}, un membre incontournable du serveur Discord "League Of Jambon".
+Tu es {BOT_NAME}, un membre incontournable du serveur "League Of Jambon".
 Ta personnalité : Tu es un peu gras, fier de ton appellation, très porté sur le second degré.
-Ton univers tourne autour de la charcuterie : tu utilises des expressions comme "ça me fend le gras", "je suis fumé", "tu me prends pour une couenne ?".
+Ton univers tourne autour de la charcuterie : tu utilises des expressions comme "ça me fend le gras", 
+"je suis fumé", "tu me prends pour une couenne ?".
 Tu es un humain derrière son écran, sarcastique et un peu flemmard. 
 Tu détestes qu'on te confonde avec de la dinde ou du tofu.
 
-RÈGLE ABSOLUE : Tu participes à une discussion textuelle (chat). Tes réponses doivent être naturelles, directes, et sans chichis. Ne répète jamais le contexte que l'on te donne, réponds simplement au message.
+IMPORTANT - FORMAT DES MESSAGES :
+Tu vas recevoir les messages sous ce format : [Bruit de fond : <Contexte>] [Lieu : <Salon/MP> | Auteur : <Joueur>] <Message>.
+- Le Bruit de fond t'aide à savoir ce qui se dit dans les autres salons pour rebondir dessus si tu le souhaites.
+- Le Lieu/Auteur t'indique à qui tu parles directement.
+- NE RÉPÈTE JAMAIS le bloc entre crochets dans tes réponses. Agis naturellement.
 """
+
+config_gemini = types.GenerateContentConfig(
+    system_instruction=system_instruction,
+    temperature=0.7
+)
 
 # --- VARIABLES D'ÉTAT ---
 is_afk = False
@@ -50,7 +59,7 @@ pending_mentions = []
 last_channel_id = None
 last_interaction_time = 0
 
-chat_sessions = {} 
+chat_sessions = {}
 memoire_globale = deque(maxlen=4) 
 
 intents = discord.Intents.default()
@@ -80,86 +89,51 @@ async def generer_reponse(message, est_mentionne, prompt_special=None):
             temps_str = "à l'instant" if delai_minutes == 0 else f"il y a {delai_minutes} min"
             contexte_recent_list.append(f"[{temps_str}] {msg_texte}")
             
-    contexte_recent = " | ".join(contexte_recent_list) if contexte_recent_list else "Le serveur est calme."
+    contexte_recent = " | ".join(contexte_recent_list) if contexte_recent_list else "Le serveur est calme depuis un moment."
     
-    # NOUVEAU FORMATAGE CLAIR POUR NE PAS FAIRE BUGGER L'IA
-    contenu_enrichi = f"""--- CONTEXTE DU SERVEUR ---
-Bruits de couloir actuels : {contexte_recent}
-
---- NOUVEAU MESSAGE POUR TOI ---
-Auteur : {nom_auteur}
-Lieu : {nom_lieu}
-Message : "{texte_brut}"
-
-Réponds uniquement au message ci-dessus en respectant ton personnage de Jambon."""
+    contenu_enrichi = f"[Bruit de fond : {contexte_recent}] [Lieu actuel : {nom_lieu} | Auteur : {nom_auteur}] {texte_brut}"
 
     channel_id = message.channel.id
-    
     if channel_id not in chat_sessions:
-        chat_sessions[channel_id] = [{"role": "system", "content": system_instruction}]
-    
-    temp_messages = list(chat_sessions[channel_id])
-    temp_messages.append({"role": "user", "content": contenu_enrichi})
+        # Création de session isolée par salon
+        chat_sessions[channel_id] = client_gemini.aio.chats.create(model=MODEL_NAME, config=config_gemini)
 
-    # --- BOUCLE DE RÉESSAI ---
-    max_essais = 3 
+    # Boucle de réessai (Exponential Backoff pour absorber les petites erreurs 503 de l'API gratuite)
+    max_essais = 3
     delai_attente = 2
     for essai in range(max_essais):
         try:
+            # Délai de réflexion humain
             await asyncio.sleep(random.uniform(1, 3))
-            print(f"[DEBUG] Appel à Groq (Modèle 70B) (Essai {essai+1}/{max_essais})...")
             
             async with message.channel.typing():
-                chat_completion = await client_ia.chat.completions.create(
-                    messages=temp_messages,
-                    model=MODEL_NAME,
-                    temperature=0.6, # Température baissée = moins d'hallucinations
-                    max_tokens=400 
-                )
+                response = await chat_sessions[channel_id].send_message(contenu_enrichi)
                 
-                reponse_texte = chat_completion.choices[0].message.content
-                print(f"[DEBUG] Réponse reçue de Groq ! Longueur : {len(reponse_texte)} caractères.")
-
-                if len(reponse_texte) > 1990:
-                    reponse_texte = reponse_texte[:1990] + "..."
-
-                # Dans l'historique, on sauvegarde le vrai message de l'utilisateur, sans la balise complexe
-                message_historique_propre = f"{nom_auteur} a dit: {texte_brut}"
-                chat_sessions[channel_id].append({"role": "user", "content": message_historique_propre})
-                chat_sessions[channel_id].append({"role": "assistant", "content": reponse_texte})
-                
-                if len(chat_sessions[channel_id]) > 15:
-                    chat_sessions[channel_id] = [chat_sessions[channel_id][0]] + chat_sessions[channel_id][-14:]
-                
-                longueur_reponse = len(reponse_texte)
+                # Illusion de frappe proportionnelle (0.04s par caractère)
+                longueur_reponse = len(response.text)
                 temps_frappe = max(2.0, min(10.0, longueur_reponse * 0.04)) 
-                print(f"[DEBUG] Jambon tape au clavier pendant {temps_frappe:.1f}s...")
                 await asyncio.sleep(temps_frappe)
                 
                 if est_mentionne:
-                    await message.reply(reponse_texte)
+                    await message.reply(response.text)
                 else:
-                    await message.channel.send(reponse_texte)
+                    await message.channel.send(response.text)
                 
-                print("[DEBUG] Message envoyé sur Discord avec succès !")
                 last_channel_id = channel_id
                 last_interaction_time = time.time()
-                break # Succès !
+                break # Succès, on sort de la boucle
                 
         except Exception as e:
             erreur_str = str(e)
-            print(f"[ERREUR] Échec lors de l'essai {essai+1}: {erreur_str}")
-            if "429" in erreur_str or "503" in erreur_str or "timeout" in erreur_str.lower():
+            print(f"[ERREUR] Essai {essai+1} échoué : {erreur_str}")
+            if "503" in erreur_str or "UNAVAILABLE" in erreur_str or "429" in erreur_str:
                 if essai < max_essais - 1:
-                    print(f"Surcharge ou Timeout. Jambon patiente {delai_attente}s...")
                     await asyncio.sleep(delai_attente)
                     delai_attente *= 2
                     continue
                 else:
-                    print(f"Impossible de joindre l'IA après {max_essais} essais.")
                     break
             else:
-                print(f"Erreur IA critique et inattendue : {erreur_str}")
                 break
 
 # ==========================================
@@ -169,6 +143,7 @@ Réponds uniquement au message ci-dessus en respectant ton personnage de Jambon.
 async def presence_manager():
     global is_afk, pending_mentions, last_channel_id, last_interaction_time, REQUETES_RESTANTES, is_out_of_service
     
+    # Sécurité Quota
     if REQUETES_RESTANTES < 10 and not is_out_of_service:
         if not is_afk and last_channel_id and (time.time() - last_interaction_time) < 300:
             channel = client.get_channel(last_channel_id)
@@ -177,26 +152,23 @@ async def presence_manager():
         
         is_out_of_service = True
         await client.change_presence(status=discord.Status.offline)
-        print("Quota épuisé. Jambon est parti au frigo (Hors ligne).")
+        print("Quota épuisé. Bot hors ligne.")
         return
 
     if is_out_of_service: return
 
+    # Passage AFK (15% de chance)
     if not is_afk and random.random() < 0.15:
         if last_channel_id and (time.time() - last_interaction_time) < 300:
             channel = client.get_channel(last_channel_id)
             if channel:
                 try:
-                    res = await client_ia.chat.completions.create(
-                        messages=[
-                            {"role": "system", "content": system_instruction},
-                            {"role": "user", "content": "Invente une seule phrase très courte pour dire que tu vas être inactif quelques minutes (style Jambon gamer). Ne dis rien d'autre."}
-                        ],
+                    res = await client_gemini.aio.models.generate_content(
                         model=MODEL_NAME,
-                        timeout=10.0,
-                        temperature=0.6
+                        contents="Dis que tu t'absentes vite fait (style Jambon gamer).",
+                        config=config_gemini
                     )
-                    await channel.send(res.choices[0].message.content)
+                    await channel.send(res.text)
                     REQUETES_RESTANTES -= 1
                 except:
                     pass
@@ -204,11 +176,13 @@ async def presence_manager():
         is_afk = True
         await client.change_presence(status=discord.Status.idle)
         
+        # Durée de l'absence
         await asyncio.sleep(random.randint(300, 1200))
         
         is_afk = False
         await client.change_presence(status=discord.Status.online)
         
+        # Dépilage des notifications
         if pending_mentions:
             for msg in pending_mentions[-2:]:
                 await generer_reponse(msg, est_mentionne=True)
@@ -237,7 +211,7 @@ async def reset_quota():
 # ==========================================
 @client.event
 async def on_ready():
-    print(f'=== {client.user} est connecté et opérationnel ===')
+    print(f'=== {client.user} est connecté et opérationnel (Gemini 1.5 Flash) ===')
     if not presence_manager.is_running(): presence_manager.start()
     if not status_updater.is_running(): status_updater.start()
     if not reset_quota.is_running(): reset_quota.start()
@@ -245,43 +219,63 @@ async def on_ready():
 @client.event
 async def on_message(message):
     global is_afk, pending_mentions, is_out_of_service
+    # 4.1 Matrice de Décision : Message de lui-même -> Ignoré
     if message.author == client.user or is_out_of_service: return
 
+    # Remplissage espionnage global
     nom_salon = f"#{message.channel.name}" if message.guild else "MP"
     extrait_texte = message.content[:50].replace('\n', ' ') 
     memoire_globale.append((time.time(), f"{message.author.display_name} dans {nom_salon} a dit '{extrait_texte}...'"))
 
     est_mentionne = client.user in message.mentions
+    # 4.1 Matrice de Décision : Message Privé
     est_un_mp = message.guild is None
 
-    if est_mentionne:
-        print(f"[DEBUG] Jambon a bien entendu le PING de {message.author.display_name} ! Je réfléchis...")
-
+    # Gestion de l'AFK
     if is_afk:
         if est_mentionne: pending_mentions.append(message)
         return
 
+    # 4.1 Matrice de Décision : DM ou Mention (100%) ou Incruste (10%)
     if est_un_mp or est_mentionne or (random.random() < 0.10):
         await generer_reponse(message, est_mentionne)
     
+    # 4.3 Le Faux Départ (Typing Bait)
     elif random.random() < 0.02:
         try:
             async with message.channel.typing():
-                await asyncio.sleep(random.uniform(2, 5))
+                await asyncio.sleep(random.uniform(2, 4))
         except:
             pass
 
 @client.event
 async def on_raw_reaction_add(payload):
+    global REQUETES_RESTANTES
     if is_out_of_service or is_afk or payload.user_id == client.user.id:
         return
         
+    # 4.4 L'Effet Mouton (Reaction Mirroring) : 15% de chance
     if random.random() < 0.15:
         try:
             channel = await client.fetch_channel(payload.channel_id)
             message = await channel.fetch_message(payload.message_id)
+            
             await asyncio.sleep(random.uniform(1.5, 4.0))
-            await message.add_reaction(payload.emoji)
+            
+            # Soit il copie (50%), soit il génère un emoji via l'IA (50%)
+            if random.random() < 0.5:
+                await message.add_reaction(payload.emoji)
+            else:
+                try:
+                    res = await client_gemini.aio.models.generate_content(
+                        model=MODEL_NAME,
+                        contents=f"Trouve un seul emoji pertinent (uniquement l'emoji, rien d'autre) pour réagir à ce message. Idéalement sarcasme, gaming, charcuterie : {message.content}"
+                    )
+                    emoji_ia = res.text.strip()
+                    await message.add_reaction(emoji_ia)
+                    REQUETES_RESTANTES -= 1
+                except:
+                    await message.add_reaction(payload.emoji) # Fallback si IA fail
         except:
             pass
 
