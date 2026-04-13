@@ -24,7 +24,7 @@ if not GROQ_KEY or GROQ_KEY == "TA_CLE_API_GEMINI_ICI":
 
 # Client Groq
 client_ia = Groq(api_key=GROQ_KEY)
-MODEL_NAME = "llama3-8b-8192" # Modèle rapide et gratuit sur Groq
+MODEL_NAME = "llama-3.1-8b-instant" # Nouveau modèle Groq à jour et fonctionnel
 
 # --- CONFIGURATION JAMBON ---
 LIMITE_QUOTA = 14400 # Limite quotidienne gratuite généreuse sur Groq (requêtes)
