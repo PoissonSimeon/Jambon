@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Script de démarrage et d'installation automatique pour le Bot Jambon
-# Conçu pour Debian 12 (Proxmox LXC) - Version Groq
+# Conçu pour Debian 12 (Proxmox LXC) - Version Groq Sécurisée
 
 echo "🍖 Démarrage du script d'initialisation de Jambon..."
 
@@ -25,13 +25,10 @@ if [ ! -d "venv" ]; then
     python3 -m venv venv
 fi
 
-# Activation
-source venv/bin/activate
-
-# 3. Installation des dépendances Python
-echo "Vérification des paquets Python (Groq)..."
-pip install --upgrade pip > /dev/null
-pip install discord.py groq python-dotenv > /dev/null
+# 3. Installation des dépendances Python (sans le silence pour voir les erreurs)
+echo "Vérification et installation des paquets Python..."
+venv/bin/pip install --upgrade pip
+venv/bin/pip install discord.py groq python-dotenv
 
 # 4. Vérification du fichier .env
 if [ ! -f ".env" ]; then
@@ -44,6 +41,6 @@ if [ ! -f ".env" ]; then
     exit 1
 fi
 
-# 5. Lancement du bot
+# 5. Lancement du bot via le venv explicitement
 echo "🚀 Lancement de Jambon..."
-python3 bot.py
+venv/bin/python bot.py
