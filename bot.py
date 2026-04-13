@@ -22,9 +22,11 @@ if not GROQ_KEY or GROQ_KEY == "TA_CLE_API_GROQ_ICI":
     print("ERREUR CRITIQUE: Tu n'as pas mis ta vraie clé Groq dans le fichier .env !")
     exit(1)
 
-# Client Groq Asynchrone avec un TIMEOUT de 15 secondes pour éviter le freeze !
+# Client Groq Asynchrone
 client_ia = AsyncGroq(api_key=GROQ_KEY, timeout=15.0)
-MODEL_NAME = "llama-3.1-8b-instant" 
+
+# ON PASSE SUR LE GROS MODÈLE (70 Milliards de paramètres, ultra intelligent)
+MODEL_NAME = "llama-3.3-70b-versatile" 
 
 # --- CONFIGURATION JAMBON ---
 LIMITE_QUOTA = 14400 
@@ -32,18 +34,13 @@ REQUETES_RESTANTES = LIMITE_QUOTA
 BOT_NAME = "Jambon"
 
 system_instruction = f"""
-Tu es {BOT_NAME}, un membre incontournable du serveur "League Of Jambon".
+Tu es {BOT_NAME}, un membre incontournable du serveur Discord "League Of Jambon".
 Ta personnalité : Tu es un peu gras, fier de ton appellation, très porté sur le second degré.
-Ton univers tourne autour de la charcuterie : tu utilises des expressions comme "ça me fend le gras", 
-"je suis fumé", "tu me prends pour une couenne ?".
+Ton univers tourne autour de la charcuterie : tu utilises des expressions comme "ça me fend le gras", "je suis fumé", "tu me prends pour une couenne ?".
 Tu es un humain derrière son écran, sarcastique et un peu flemmard. 
 Tu détestes qu'on te confonde avec de la dinde ou du tofu.
 
-IMPORTANT - FORMAT DES MESSAGES :
-Tu vas recevoir les messages sous ce format : [Bruit de fond : <Contexte>] [Lieu : <Salon/MP> | Auteur : <Joueur>] <Message>.
-- Le Bruit de fond t'aide à savoir ce qui se dit dans les autres salons pour rebondir dessus si tu le souhaites.
-- Le Lieu/Auteur t'indique à qui tu parles directement.
-- NE RÉPÈTE JAMAIS le bloc entre crochets dans tes réponses. Agis naturellement.
+RÈGLE ABSOLUE : Tu participes à une discussion textuelle (chat). Tes réponses doivent être naturelles, directes, et sans chichis. Ne répète jamais le contexte que l'on te donne, réponds simplement au message.
 """
 
 # --- VARIABLES D'ÉTAT ---
@@ -83,9 +80,18 @@ async def generer_reponse(message, est_mentionne, prompt_special=None):
             temps_str = "à l'instant" if delai_minutes == 0 else f"il y a {delai_minutes} min"
             contexte_recent_list.append(f"[{temps_str}] {msg_texte}")
             
-    contexte_recent = " | ".join(contexte_recent_list) if contexte_recent_list else "Le serveur est calme depuis un moment."
+    contexte_recent = " | ".join(contexte_recent_list) if contexte_recent_list else "Le serveur est calme."
     
-    contenu_enrichi = f"[Bruit de fond : {contexte_recent}] [Lieu actuel : {nom_lieu} | Auteur : {nom_auteur}] {texte_brut}"
+    # NOUVEAU FORMATAGE CLAIR POUR NE PAS FAIRE BUGGER L'IA
+    contenu_enrichi = f"""--- CONTEXTE DU SERVEUR ---
+Bruits de couloir actuels : {contexte_recent}
+
+--- NOUVEAU MESSAGE POUR TOI ---
+Auteur : {nom_auteur}
+Lieu : {nom_lieu}
+Message : "{texte_brut}"
+
+Réponds uniquement au message ci-dessus en respectant ton personnage de Jambon."""
 
     channel_id = message.channel.id
     
@@ -101,24 +107,25 @@ async def generer_reponse(message, est_mentionne, prompt_special=None):
     for essai in range(max_essais):
         try:
             await asyncio.sleep(random.uniform(1, 3))
-            print(f"[DEBUG] Appel à Groq (Essai {essai+1}/{max_essais})...")
+            print(f"[DEBUG] Appel à Groq (Modèle 70B) (Essai {essai+1}/{max_essais})...")
             
             async with message.channel.typing():
                 chat_completion = await client_ia.chat.completions.create(
                     messages=temp_messages,
                     model=MODEL_NAME,
-                    temperature=0.7,
-                    max_tokens=800 # Empêche l'IA de faire des messages kilométriques
+                    temperature=0.6, # Température baissée = moins d'hallucinations
+                    max_tokens=400 
                 )
                 
                 reponse_texte = chat_completion.choices[0].message.content
                 print(f"[DEBUG] Réponse reçue de Groq ! Longueur : {len(reponse_texte)} caractères.")
 
-                # Sécurité absolue : Discord crash si message > 2000 caractères
                 if len(reponse_texte) > 1990:
                     reponse_texte = reponse_texte[:1990] + "..."
 
-                chat_sessions[channel_id].append({"role": "user", "content": contenu_enrichi})
+                # Dans l'historique, on sauvegarde le vrai message de l'utilisateur, sans la balise complexe
+                message_historique_propre = f"{nom_auteur} a dit: {texte_brut}"
+                chat_sessions[channel_id].append({"role": "user", "content": message_historique_propre})
                 chat_sessions[channel_id].append({"role": "assistant", "content": reponse_texte})
                 
                 if len(chat_sessions[channel_id]) > 15:
@@ -183,10 +190,11 @@ async def presence_manager():
                     res = await client_ia.chat.completions.create(
                         messages=[
                             {"role": "system", "content": system_instruction},
-                            {"role": "user", "content": "Dis que tu t'absentes vite fait (style Jambon gamer)."}
+                            {"role": "user", "content": "Invente une seule phrase très courte pour dire que tu vas être inactif quelques minutes (style Jambon gamer). Ne dis rien d'autre."}
                         ],
                         model=MODEL_NAME,
-                        timeout=10.0
+                        timeout=10.0,
+                        temperature=0.6
                     )
                     await channel.send(res.choices[0].message.content)
                     REQUETES_RESTANTES -= 1
@@ -246,10 +254,8 @@ async def on_message(message):
     est_mentionne = client.user in message.mentions
     est_un_mp = message.guild is None
 
-    # ---- LOG DE DEBUG POUR TOI ----
     if est_mentionne:
         print(f"[DEBUG] Jambon a bien entendu le PING de {message.author.display_name} ! Je réfléchis...")
-    # -------------------------------
 
     if is_afk:
         if est_mentionne: pending_mentions.append(message)
