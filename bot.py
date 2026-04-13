@@ -1,6 +1,5 @@
 import discord
-from google import genai
-from google.genai import types
+from groq import Groq
 import os
 import random
 import asyncio
@@ -14,21 +13,21 @@ from discord.ext import tasks
 # ==========================================
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
-GEMINI_KEY = os.getenv('GEMINI_API_KEY')
+GROQ_KEY = os.getenv('GROQ_API_KEY')
 
 if not TOKEN or TOKEN == "TON_TOKEN_DISCORD_ICI":
     print("ERREUR CRITIQUE: Tu n'as pas mis ton vrai Token Discord dans le fichier .env !")
     exit(1)
-if not GEMINI_KEY or GEMINI_KEY == "TA_CLE_API_GEMINI_ICI":
-    print("ERREUR CRITIQUE: Tu n'as pas mis ta vraie clé Gemini dans le fichier .env !")
+if not GROQ_KEY or GROQ_KEY == "TA_CLE_API_GEMINI_ICI":
+    print("ERREUR CRITIQUE: Tu n'as pas mis ta vraie clé Groq dans le fichier .env !")
     exit(1)
 
-# Client Gemini (Nouvelle API)
-client_gemini = genai.Client(api_key=GEMINI_KEY)
-MODEL_NAME = "gemini-2.5-flash" # Modèle fonctionnel sans carte bancaire
+# Client Groq
+client_ia = Groq(api_key=GROQ_KEY)
+MODEL_NAME = "llama3-8b-8192" # Modèle rapide et gratuit sur Groq
 
 # --- CONFIGURATION JAMBON ---
-LIMITE_QUOTA = 1500 
+LIMITE_QUOTA = 14400 # Limite quotidienne gratuite généreuse sur Groq (requêtes)
 REQUETES_RESTANTES = LIMITE_QUOTA
 BOT_NAME = "Jambon"
 
@@ -47,10 +46,6 @@ Tu vas recevoir les messages sous ce format : [Bruit de fond : <Contexte>] [Lieu
 - NE RÉPÈTE JAMAIS le bloc entre crochets dans tes réponses. Agis naturellement.
 """
 
-config_gemini = types.GenerateContentConfig(
-    system_instruction=system_instruction,
-)
-
 # --- VARIABLES D'ÉTAT ---
 is_afk = False
 is_out_of_service = False
@@ -58,7 +53,7 @@ pending_mentions = []
 last_channel_id = None
 last_interaction_time = 0
 
-chat_sessions = {}
+chat_sessions = {} # Dictionnaire pour stocker l'historique OpenAI-like
 memoire_globale = deque(maxlen=4) 
 
 intents = discord.Intents.default()
@@ -93,40 +88,59 @@ async def generer_reponse(message, est_mentionne, prompt_special=None):
     contenu_enrichi = f"[Bruit de fond : {contexte_recent}] [Lieu actuel : {nom_lieu} | Auteur : {nom_auteur}] {texte_brut}"
 
     channel_id = message.channel.id
+    
+    # Gestion de l'historique Groq (format OpenAI)
     if channel_id not in chat_sessions:
-        chat_sessions[channel_id] = client_gemini.chats.create(model=MODEL_NAME, config=config_gemini)
+        chat_sessions[channel_id] = [{"role": "system", "content": system_instruction}]
+    
+    chat_sessions[channel_id].append({"role": "user", "content": contenu_enrichi})
+    
+    # On limite l'historique pour ne pas exploser la limite de tokens Groq
+    if len(chat_sessions[channel_id]) > 15:
+        # On garde le system prompt, et on enlève les plus vieux messages
+        chat_sessions[channel_id] = [chat_sessions[channel_id][0]] + chat_sessions[channel_id][-14:]
 
-    # --- BOUCLE DE RÉESSAI (Gestion Erreur 503) ---
-    max_essais = 3
+    # --- BOUCLE DE RÉESSAI ---
+    max_essais = 5
+    delai_attente = 2
     for essai in range(max_essais):
         try:
             await asyncio.sleep(random.uniform(1, 3))
             
             async with message.channel.typing():
-                response = chat_sessions[channel_id].send_message(contenu_enrichi)
+                # Appel API Groq
+                chat_completion = client_ia.chat.completions.create(
+                    messages=chat_sessions[channel_id],
+                    model=MODEL_NAME,
+                    temperature=0.7,
+                )
                 
-                longueur_reponse = len(response.text)
+                reponse_texte = chat_completion.choices[0].message.content
+                chat_sessions[channel_id].append({"role": "assistant", "content": reponse_texte})
+                
+                longueur_reponse = len(reponse_texte)
                 temps_frappe = max(2.0, min(10.0, longueur_reponse * 0.04)) 
                 await asyncio.sleep(temps_frappe)
                 
                 if est_mentionne:
-                    await message.reply(response.text)
+                    await message.reply(reponse_texte)
                 else:
-                    await message.channel.send(response.text)
+                    await message.channel.send(reponse_texte)
                 
                 last_channel_id = channel_id
                 last_interaction_time = time.time()
-                break # Succès ! On sort de la boucle
+                break # Succès !
                 
         except Exception as e:
             erreur_str = str(e)
-            if "503" in erreur_str or "UNAVAILABLE" in erreur_str:
+            if "429" in erreur_str or "503" in erreur_str:
                 if essai < max_essais - 1:
-                    print(f"Serveurs Google surchargés (503). Jambon réessaie dans 5s... (Essai {essai+1}/{max_essais})")
-                    await asyncio.sleep(5)
+                    print(f"Surcharge API Groq. Jambon patiente {delai_attente}s... (Essai {essai+1}/{max_essais})")
+                    await asyncio.sleep(delai_attente)
+                    delai_attente *= 2
                     continue
                 else:
-                    print("Impossible de joindre Google après 3 essais (Erreur 503).")
+                    print(f"Impossible de joindre l'IA après {max_essais} essais.")
                     break
             else:
                 print(f"Erreur IA non bloquante : {erreur_str}")
@@ -157,12 +171,14 @@ async def presence_manager():
             channel = client.get_channel(last_channel_id)
             if channel:
                 try:
-                    res = client_gemini.models.generate_content(
+                    res = client_ia.chat.completions.create(
+                        messages=[
+                            {"role": "system", "content": system_instruction},
+                            {"role": "user", "content": "Dis que tu t'absentes vite fait (style Jambon gamer)."}
+                        ],
                         model=MODEL_NAME,
-                        contents="Dis que tu t'absentes vite fait (style Jambon gamer).",
-                        config=config_gemini
                     )
-                    await channel.send(res.text)
+                    await channel.send(res.choices[0].message.content)
                     REQUETES_RESTANTES -= 1
                 except:
                     pass
