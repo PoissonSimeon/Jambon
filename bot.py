@@ -25,7 +25,7 @@ if not GEMINI_KEY or GEMINI_KEY == "TA_CLE_API_GEMINI_ICI":
 
 # Client Gemini (Nouvelle API, utilisation de .aio plus bas pour l'asynchrone)
 client_gemini = genai.Client(api_key=GEMINI_KEY)
-MODEL_NAME = "gemini-1.5-flash" # Strict respect du cahier des charges
+MODEL_NAME = "gemini-2.5-flash" # Mise à jour vers le modèle gratuit actif
 
 # --- CONFIGURATION JAMBON ---
 LIMITE_QUOTA = 1500 
