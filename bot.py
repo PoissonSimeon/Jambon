@@ -53,11 +53,15 @@ config_gemini = types.GenerateContentConfig(
 
 # --- VARIABLES D'ÉTAT ---
 is_afk = False
-afk_end_time = 0 # NOUVEAU: Remplace le sleep bloquant
+afk_end_time = 0 
 is_out_of_service = False
 pending_mentions = []
+
+# NOUVEAU : Variables pour la mémorisation de la conversation (Tête-à-tête)
 last_channel_id = None
 last_interaction_time = 0
+current_conversational_partner = None 
+conversation_expiry = 0
 
 chat_sessions = {}
 memoire_globale = deque(maxlen=4) 
@@ -72,6 +76,7 @@ client = discord.Client(intents=intents)
 # ==========================================
 async def generer_reponse(message, est_mentionne, prompt_special=None):
     global last_channel_id, last_interaction_time, REQUETES_RESTANTES, is_out_of_service
+    global current_conversational_partner, conversation_expiry
     
     if is_out_of_service: 
         print("[DEBUG] Requête ignorée : Jambon est hors service (Quota).")
@@ -124,8 +129,14 @@ async def generer_reponse(message, est_mentionne, prompt_special=None):
                     await message.channel.send(response.text)
                 
                 print(f"[DEBUG] ✅ Message envoyé avec succès dans {nom_lieu}.")
+                
+                # Mise à jour de l'attention (Jambon se focalise sur cette personne)
                 last_channel_id = channel_id
                 last_interaction_time = time.time()
+                current_conversational_partner = message.author.id
+                conversation_expiry = time.time() + 60 # Jambon reste concentré sur lui pendant 60 secondes
+                print(f"[DEBUG] Jambon fixe son attention sur {nom_auteur} pour la prochaine minute.")
+                
                 break 
                 
         except Exception as e:
@@ -150,26 +161,23 @@ async def generer_reponse(message, est_mentionne, prompt_special=None):
 async def presence_manager():
     global is_afk, afk_end_time, pending_mentions, last_channel_id, last_interaction_time, REQUETES_RESTANTES, is_out_of_service
     
-    # 1. Gestion de l'état AFK en cours (sans bloquer la boucle)
     if is_afk:
         if time.time() >= afk_end_time:
             print("[DEBUG] ⏰ Fin de l'AFK. Jambon est de retour !")
             is_afk = False
             await client.change_presence(status=discord.Status.online)
             
-            # Traitement des mentions reçues pendant l'absence
             if pending_mentions:
                 print(f"[DEBUG] Traitement des {len(pending_mentions)} mentions accumulées pendant l'AFK...")
-                for msg in pending_mentions[-2:]: # Garde seulement les 2 dernières pour éviter le spam
+                for msg in pending_mentions[-2:]:
                     await generer_reponse(msg, est_mentionne=True)
                     await asyncio.sleep(random.randint(5, 15))
                 pending_mentions.clear()
         else:
             minutes_restantes = int((afk_end_time - time.time()) / 60)
             print(f"[DEBUG] Jambon est AFK (Retour prévu dans ~{minutes_restantes} min).")
-        return # On stoppe l'exécution de la boucle tant qu'il est AFK
+        return 
 
-    # 2. Sécurité Quota
     if REQUETES_RESTANTES < 10 and not is_out_of_service:
         print("[DEBUG] ⚠️ ALERTE QUOTA : Jambon se met hors ligne pour sécurité.")
         if last_channel_id and (time.time() - last_interaction_time) < 300:
@@ -183,13 +191,11 @@ async def presence_manager():
 
     if is_out_of_service: return
 
-    # 3. Décision de passer AFK (15% de chance par minute)
     if random.random() < 0.15:
         duree_afk = random.randint(300, 1200)
         afk_end_time = time.time() + duree_afk
         print(f"[DEBUG] 💤 Décision de passer AFK pour {int(duree_afk/60)} minutes.")
         
-        # S'il discutait, il prévient avant de partir
         if last_channel_id and (time.time() - last_interaction_time) < 300:
             print(f"[DEBUG] Jambon génère un message de départ car il discutait récemment...")
             channel = client.get_channel(last_channel_id)
@@ -239,6 +245,7 @@ async def on_ready():
 @client.event
 async def on_message(message):
     global is_afk, pending_mentions, is_out_of_service
+    global current_conversational_partner, conversation_expiry
     
     if message.author == client.user: 
         return
@@ -247,36 +254,61 @@ async def on_message(message):
         return
 
     nom_salon = f"#{message.channel.name}" if message.guild else "MP"
-    est_mentionne = client.user in message.mentions
     est_un_mp = message.guild is None
+    est_mentionne = client.user in message.mentions
 
-    # Mémorisation
+    # 1. Vérifier si c'est une fonctionnalité "Réponse" directe à un message de Jambon (même sans ping)
+    est_reponse_directe = False
+    if message.reference:
+        ref_msg = getattr(message.reference, 'resolved', None) or getattr(message.reference, 'cached_message', None)
+        if ref_msg and getattr(ref_msg, 'author', None) == client.user:
+            est_reponse_directe = True
+
+    # 2. Vérifier si le joueur est en pleine discussion fluide avec Jambon (tête-à-tête)
+    est_en_conversation = (
+        current_conversational_partner == message.author.id and
+        time.time() < conversation_expiry and
+        message.channel.id == last_channel_id
+    )
+
+    # 3. L'humain se laisse distraire : on casse le focus de conversation si un autre joueur parle au milieu !
+    if message.channel.id == last_channel_id and message.author.id != current_conversational_partner:
+        if not est_mentionne and not est_reponse_directe:
+            if current_conversational_partner is not None:
+                print(f"[DEBUG] Focus brisé : {message.author.display_name} a interrompu la discussion.")
+            current_conversational_partner = None
+
+    # Mémorisation globale
     extrait_texte = message.content[:50].replace('\n', ' ') 
     memoire_globale.append((time.time(), f"{message.author.display_name} dans {nom_salon} a dit '{extrait_texte}...'"))
 
     if est_mentionne:
         print(f"[DEBUG] 🎯 PING direct reçu de {message.author.display_name} dans {nom_salon}.")
 
-    # Gestion de l'AFK : si mentionné, on le met de côté
+    # Gestion de l'AFK 
     if is_afk:
-        if est_mentionne:
-            print(f"[DEBUG] Jambon est AFK. Mention de {message.author.display_name} mise en file d'attente.")
+        if est_mentionne or est_reponse_directe:
+            print(f"[DEBUG] Jambon est AFK. Message de {message.author.display_name} mis en file d'attente.")
             pending_mentions.append(message)
         else:
             print(f"[DEBUG] Message ignoré car Jambon est AFK.")
         return
 
     # Matrice de Décision
-    if est_un_mp or est_mentionne:
-        print(f"[DEBUG] Déclenchement de la réponse : C'est un MP ou une Mention (100% de chance).")
+    if est_un_mp or est_mentionne or est_reponse_directe or est_en_conversation:
+        raison = "MP/Ping"
+        if est_reponse_directe: raison = "Utilisation du bouton Répondre"
+        elif est_en_conversation: raison = "Conversation en cours détectée"
+        
+        print(f"[DEBUG] 💬 Déclenchement (100%) : {raison}.")
         await generer_reponse(message, est_mentionne)
     
     elif random.random() < 0.10: # 10% L'Incruste
-        print(f"[DEBUG] 🎲 Déclenchement de la réponse : L'Incruste Spontanée (10% de chance atteinte).")
+        print(f"[DEBUG] 🎲 Déclenchement : L'Incruste Spontanée (10% de chance atteinte).")
         await generer_reponse(message, est_mentionne)
     
     elif random.random() < 0.02: # 2% Faux Départ
-        print("[DEBUG] 😈 Déclenchement de la réponse : Faux départ (Typing Bait).")
+        print("[DEBUG] 😈 Déclenchement : Faux départ (Typing Bait).")
         try:
             async with message.channel.typing():
                 await asyncio.sleep(random.uniform(2, 4))
@@ -284,7 +316,7 @@ async def on_message(message):
         except:
             pass
     else:
-        # Message classique ignoré (silencieux)
+        # Message classique ignoré
         pass
 
 @client.event
