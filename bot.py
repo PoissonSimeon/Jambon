@@ -106,8 +106,8 @@ async def generer_reponse(message, est_mentionne, prompt_special=None):
         print(f"[DEBUG] Création d'une nouvelle session mémoire pour le salon {nom_lieu}.")
         chat_sessions[channel_id] = client_gemini.aio.chats.create(model=MODEL_NAME, config=config_gemini)
 
-    max_essais = 3
-    delai_attente = 2
+    max_essais = 5
+    delai_attente = 4
     for essai in range(max_essais):
         try:
             print(f"[DEBUG] Jambon réfléchit (Appel API Google) - Essai {essai+1}/{max_essais}...")
@@ -296,9 +296,10 @@ async def on_message(message):
 
     # Matrice de Décision
     if est_un_mp or est_mentionne or est_reponse_directe or est_en_conversation:
-        raison = "MP/Ping"
-        if est_reponse_directe: raison = "Utilisation du bouton Répondre"
-        elif est_en_conversation: raison = "Conversation en cours détectée"
+        if est_mentionne: raison = "Ping direct (@Jambon)"
+        elif est_reponse_directe: raison = "Utilisation du bouton Répondre"
+        elif est_un_mp: raison = "Message Privé"
+        else: raison = "Conversation en cours détectée"
         
         print(f"[DEBUG] 💬 Déclenchement (100%) : {raison}.")
         await generer_reponse(message, est_mentionne)
