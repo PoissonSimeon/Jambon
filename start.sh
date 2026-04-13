@@ -5,12 +5,18 @@
 
 echo "🍖 Démarrage du script d'initialisation de Jambon..."
 
+# Détection de l'utilisateur : on n'utilise sudo que si on n'est pas root
+SUDO=""
+if [ "$EUID" -ne 0 ]; then
+    SUDO="sudo"
+fi
+
 # 1. Vérification des dépendances système
 echo "Vérification de Python et venv..."
 if ! command -v python3 &> /dev/null || ! command -v pip &> /dev/null || ! dpkg -l | grep -q python3-venv; then
     echo "Installation des dépendances système nécessaires..."
-    sudo apt update
-    sudo apt install python3 python3-venv python3-pip -y
+    $SUDO apt update
+    $SUDO apt install python3 python3-venv python3-pip -y
 fi
 
 # 2. Configuration de l'environnement virtuel (venv)
