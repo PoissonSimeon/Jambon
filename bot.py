@@ -18,16 +18,16 @@ GROQ_KEY = os.getenv('GROQ_API_KEY')
 if not TOKEN or TOKEN == "TON_TOKEN_DISCORD_ICI":
     print("ERREUR CRITIQUE: Tu n'as pas mis ton vrai Token Discord dans le fichier .env !")
     exit(1)
-if not GROQ_KEY or GROQ_KEY == "TA_CLE_API_GEMINI_ICI":
+if not GROQ_KEY or GROQ_KEY == "TA_CLE_API_GROQ_ICI":
     print("ERREUR CRITIQUE: Tu n'as pas mis ta vraie clé Groq dans le fichier .env !")
     exit(1)
 
-# Client Groq Asynchrone (Évite de geler Discord !)
-client_ia = AsyncGroq(api_key=GROQ_KEY)
-MODEL_NAME = "llama-3.1-8b-instant" # Nouveau modèle Groq à jour et fonctionnel
+# Client Groq Asynchrone avec un TIMEOUT de 15 secondes pour éviter le freeze !
+client_ia = AsyncGroq(api_key=GROQ_KEY, timeout=15.0)
+MODEL_NAME = "llama-3.1-8b-instant" 
 
 # --- CONFIGURATION JAMBON ---
-LIMITE_QUOTA = 14400 # Limite quotidienne gratuite généreuse sur Groq (requêtes)
+LIMITE_QUOTA = 14400 
 REQUETES_RESTANTES = LIMITE_QUOTA
 BOT_NAME = "Jambon"
 
@@ -53,7 +53,7 @@ pending_mentions = []
 last_channel_id = None
 last_interaction_time = 0
 
-chat_sessions = {} # Dictionnaire pour stocker l'historique OpenAI-like
+chat_sessions = {} 
 memoire_globale = deque(maxlen=4) 
 
 intents = discord.Intents.default()
@@ -89,41 +89,44 @@ async def generer_reponse(message, est_mentionne, prompt_special=None):
 
     channel_id = message.channel.id
     
-    # Gestion de l'historique Groq (format OpenAI)
     if channel_id not in chat_sessions:
         chat_sessions[channel_id] = [{"role": "system", "content": system_instruction}]
     
-    # On prépare le message sans corrompre l'historique en cas d'erreur
     temp_messages = list(chat_sessions[channel_id])
     temp_messages.append({"role": "user", "content": contenu_enrichi})
 
     # --- BOUCLE DE RÉESSAI ---
-    max_essais = 3 # Réduit à 3 pour éviter les blocages trop longs
+    max_essais = 3 
     delai_attente = 2
     for essai in range(max_essais):
         try:
             await asyncio.sleep(random.uniform(1, 3))
+            print(f"[DEBUG] Appel à Groq (Essai {essai+1}/{max_essais})...")
             
             async with message.channel.typing():
-                # Appel API Groq ASYNCHRONE (avec await)
                 chat_completion = await client_ia.chat.completions.create(
                     messages=temp_messages,
                     model=MODEL_NAME,
                     temperature=0.7,
+                    max_tokens=800 # Empêche l'IA de faire des messages kilométriques
                 )
                 
                 reponse_texte = chat_completion.choices[0].message.content
+                print(f"[DEBUG] Réponse reçue de Groq ! Longueur : {len(reponse_texte)} caractères.")
 
-                # Si tout a fonctionné, on sauvegarde pour de vrai dans l'historique
+                # Sécurité absolue : Discord crash si message > 2000 caractères
+                if len(reponse_texte) > 1990:
+                    reponse_texte = reponse_texte[:1990] + "..."
+
                 chat_sessions[channel_id].append({"role": "user", "content": contenu_enrichi})
                 chat_sessions[channel_id].append({"role": "assistant", "content": reponse_texte})
                 
-                # On limite l'historique pour ne pas exploser la limite de tokens Groq
                 if len(chat_sessions[channel_id]) > 15:
                     chat_sessions[channel_id] = [chat_sessions[channel_id][0]] + chat_sessions[channel_id][-14:]
                 
                 longueur_reponse = len(reponse_texte)
                 temps_frappe = max(2.0, min(10.0, longueur_reponse * 0.04)) 
+                print(f"[DEBUG] Jambon tape au clavier pendant {temps_frappe:.1f}s...")
                 await asyncio.sleep(temps_frappe)
                 
                 if est_mentionne:
@@ -131,15 +134,17 @@ async def generer_reponse(message, est_mentionne, prompt_special=None):
                 else:
                     await message.channel.send(reponse_texte)
                 
+                print("[DEBUG] Message envoyé sur Discord avec succès !")
                 last_channel_id = channel_id
                 last_interaction_time = time.time()
                 break # Succès !
                 
         except Exception as e:
             erreur_str = str(e)
-            if "429" in erreur_str or "503" in erreur_str:
+            print(f"[ERREUR] Échec lors de l'essai {essai+1}: {erreur_str}")
+            if "429" in erreur_str or "503" in erreur_str or "timeout" in erreur_str.lower():
                 if essai < max_essais - 1:
-                    print(f"Surcharge API Groq. Jambon patiente {delai_attente}s... (Essai {essai+1}/{max_essais})")
+                    print(f"Surcharge ou Timeout. Jambon patiente {delai_attente}s...")
                     await asyncio.sleep(delai_attente)
                     delai_attente *= 2
                     continue
@@ -147,7 +152,7 @@ async def generer_reponse(message, est_mentionne, prompt_special=None):
                     print(f"Impossible de joindre l'IA après {max_essais} essais.")
                     break
             else:
-                print(f"Erreur IA non bloquante : {erreur_str}")
+                print(f"Erreur IA critique et inattendue : {erreur_str}")
                 break
 
 # ==========================================
@@ -181,6 +186,7 @@ async def presence_manager():
                             {"role": "user", "content": "Dis que tu t'absentes vite fait (style Jambon gamer)."}
                         ],
                         model=MODEL_NAME,
+                        timeout=10.0
                     )
                     await channel.send(res.choices[0].message.content)
                     REQUETES_RESTANTES -= 1
