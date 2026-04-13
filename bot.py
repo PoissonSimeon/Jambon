@@ -17,15 +17,14 @@ TOKEN = os.getenv('DISCORD_TOKEN')
 GEMINI_KEY = os.getenv('GEMINI_API_KEY')
 
 if not TOKEN or TOKEN == "TON_TOKEN_DISCORD_ICI":
-    print("ERREUR CRITIQUE: Token Discord manquant dans le fichier .env")
+    print("[ERREUR CRITIQUE] Token Discord manquant dans le fichier .env")
     exit(1)
 if not GEMINI_KEY or GEMINI_KEY == "TA_CLE_API_GEMINI_ICI":
-    print("ERREUR CRITIQUE: Clé Gemini manquante dans le fichier .env")
+    print("[ERREUR CRITIQUE] Clé Gemini manquante dans le fichier .env")
     exit(1)
 
-# Client Gemini (Nouvelle API, utilisation de .aio plus bas pour l'asynchrone)
 client_gemini = genai.Client(api_key=GEMINI_KEY)
-MODEL_NAME = "gemini-2.5-flash" # Mise à jour vers le modèle gratuit actif
+MODEL_NAME = "gemini-2.5-flash"
 
 # --- CONFIGURATION JAMBON ---
 LIMITE_QUOTA = 1500 
@@ -54,6 +53,7 @@ config_gemini = types.GenerateContentConfig(
 
 # --- VARIABLES D'ÉTAT ---
 is_afk = False
+afk_end_time = 0 # NOUVEAU: Remplace le sleep bloquant
 is_out_of_service = False
 pending_mentions = []
 last_channel_id = None
@@ -73,9 +73,12 @@ client = discord.Client(intents=intents)
 async def generer_reponse(message, est_mentionne, prompt_special=None):
     global last_channel_id, last_interaction_time, REQUETES_RESTANTES, is_out_of_service
     
-    if is_out_of_service: return
+    if is_out_of_service: 
+        print("[DEBUG] Requête ignorée : Jambon est hors service (Quota).")
+        return
 
     REQUETES_RESTANTES -= 1
+    print(f"[DEBUG] Génération de réponse... (Quotas restants: {REQUETES_RESTANTES})")
     
     nom_auteur = message.author.display_name
     nom_lieu = f"#{message.channel.name}" if message.guild else "MP"
@@ -95,23 +98,24 @@ async def generer_reponse(message, est_mentionne, prompt_special=None):
 
     channel_id = message.channel.id
     if channel_id not in chat_sessions:
-        # Création de session isolée par salon
+        print(f"[DEBUG] Création d'une nouvelle session mémoire pour le salon {nom_lieu}.")
         chat_sessions[channel_id] = client_gemini.aio.chats.create(model=MODEL_NAME, config=config_gemini)
 
-    # Boucle de réessai (Exponential Backoff pour absorber les petites erreurs 503 de l'API gratuite)
     max_essais = 3
     delai_attente = 2
     for essai in range(max_essais):
         try:
-            # Délai de réflexion humain
+            print(f"[DEBUG] Jambon réfléchit (Appel API Google) - Essai {essai+1}/{max_essais}...")
             await asyncio.sleep(random.uniform(1, 3))
             
             async with message.channel.typing():
+                print(f"[DEBUG] Statut 'Jambon écrit...' activé sur Discord.")
                 response = await chat_sessions[channel_id].send_message(contenu_enrichi)
                 
-                # Illusion de frappe proportionnelle (0.04s par caractère)
                 longueur_reponse = len(response.text)
                 temps_frappe = max(2.0, min(10.0, longueur_reponse * 0.04)) 
+                print(f"[DEBUG] Réponse trouvée ({longueur_reponse} caractères). Simulation de frappe pendant {temps_frappe:.1f} secondes.")
+                
                 await asyncio.sleep(temps_frappe)
                 
                 if est_mentionne:
@@ -119,19 +123,22 @@ async def generer_reponse(message, est_mentionne, prompt_special=None):
                 else:
                     await message.channel.send(response.text)
                 
+                print(f"[DEBUG] ✅ Message envoyé avec succès dans {nom_lieu}.")
                 last_channel_id = channel_id
                 last_interaction_time = time.time()
-                break # Succès, on sort de la boucle
+                break 
                 
         except Exception as e:
             erreur_str = str(e)
-            print(f"[ERREUR] Essai {essai+1} échoué : {erreur_str}")
+            print(f"[ERREUR] Échec de l'essai {essai+1}: {erreur_str}")
             if "503" in erreur_str or "UNAVAILABLE" in erreur_str or "429" in erreur_str:
                 if essai < max_essais - 1:
+                    print(f"[DEBUG] Surcharge détectée. Repos de {delai_attente}s avant le prochain essai.")
                     await asyncio.sleep(delai_attente)
                     delai_attente *= 2
                     continue
                 else:
+                    print("[ERREUR CRITIQUE] Abandon. API Google injoignable après 3 essais.")
                     break
             else:
                 break
@@ -141,25 +148,50 @@ async def generer_reponse(message, est_mentionne, prompt_special=None):
 # ==========================================
 @tasks.loop(minutes=1)
 async def presence_manager():
-    global is_afk, pending_mentions, last_channel_id, last_interaction_time, REQUETES_RESTANTES, is_out_of_service
+    global is_afk, afk_end_time, pending_mentions, last_channel_id, last_interaction_time, REQUETES_RESTANTES, is_out_of_service
     
-    # Sécurité Quota
+    # 1. Gestion de l'état AFK en cours (sans bloquer la boucle)
+    if is_afk:
+        if time.time() >= afk_end_time:
+            print("[DEBUG] ⏰ Fin de l'AFK. Jambon est de retour !")
+            is_afk = False
+            await client.change_presence(status=discord.Status.online)
+            
+            # Traitement des mentions reçues pendant l'absence
+            if pending_mentions:
+                print(f"[DEBUG] Traitement des {len(pending_mentions)} mentions accumulées pendant l'AFK...")
+                for msg in pending_mentions[-2:]: # Garde seulement les 2 dernières pour éviter le spam
+                    await generer_reponse(msg, est_mentionne=True)
+                    await asyncio.sleep(random.randint(5, 15))
+                pending_mentions.clear()
+        else:
+            minutes_restantes = int((afk_end_time - time.time()) / 60)
+            print(f"[DEBUG] Jambon est AFK (Retour prévu dans ~{minutes_restantes} min).")
+        return # On stoppe l'exécution de la boucle tant qu'il est AFK
+
+    # 2. Sécurité Quota
     if REQUETES_RESTANTES < 10 and not is_out_of_service:
-        if not is_afk and last_channel_id and (time.time() - last_interaction_time) < 300:
+        print("[DEBUG] ⚠️ ALERTE QUOTA : Jambon se met hors ligne pour sécurité.")
+        if last_channel_id and (time.time() - last_interaction_time) < 300:
             channel = client.get_channel(last_channel_id)
             if channel:
                 await channel.send("Bon, j'ai plus de jus là, je vais me faire fumer au frais. À plus les couennes.")
         
         is_out_of_service = True
         await client.change_presence(status=discord.Status.offline)
-        print("Quota épuisé. Bot hors ligne.")
         return
 
     if is_out_of_service: return
 
-    # Passage AFK (15% de chance)
-    if not is_afk and random.random() < 0.15:
+    # 3. Décision de passer AFK (15% de chance par minute)
+    if random.random() < 0.15:
+        duree_afk = random.randint(300, 1200)
+        afk_end_time = time.time() + duree_afk
+        print(f"[DEBUG] 💤 Décision de passer AFK pour {int(duree_afk/60)} minutes.")
+        
+        # S'il discutait, il prévient avant de partir
         if last_channel_id and (time.time() - last_interaction_time) < 300:
+            print(f"[DEBUG] Jambon génère un message de départ car il discutait récemment...")
             channel = client.get_channel(last_channel_id)
             if channel:
                 try:
@@ -170,30 +202,18 @@ async def presence_manager():
                     )
                     await channel.send(res.text)
                     REQUETES_RESTANTES -= 1
-                except:
-                    pass
+                except Exception as e:
+                    print(f"[DEBUG] Échec de l'envoi du message de départ : {e}")
 
         is_afk = True
         await client.change_presence(status=discord.Status.idle)
-        
-        # Durée de l'absence
-        await asyncio.sleep(random.randint(300, 1200))
-        
-        is_afk = False
-        await client.change_presence(status=discord.Status.online)
-        
-        # Dépilage des notifications
-        if pending_mentions:
-            for msg in pending_mentions[-2:]:
-                await generer_reponse(msg, est_mentionne=True)
-                await asyncio.sleep(random.randint(5, 15))
-            pending_mentions = []
 
 @tasks.loop(hours=6)
 async def status_updater():
     liste_statuts = ["Sur mon tel", "En train de manger", "Dodo la", "Sur LoL (a l'aide)", "Fatigué", "Check le frigo", "Gaming", ""]
     if not is_out_of_service and random.random() < 0.15:
         nouveau_statut = random.choice(liste_statuts)
+        print(f"[DEBUG] 🔄 Changement de statut de profil : '{nouveau_statut}'")
         activity = discord.CustomActivity(name=nouveau_statut) if nouveau_statut else None
         current_status = discord.Status.idle if is_afk else discord.Status.online
         await client.change_presence(status=current_status, activity=activity)
@@ -201,17 +221,17 @@ async def status_updater():
 @tasks.loop(hours=24)
 async def reset_quota():
     global REQUETES_RESTANTES, is_out_of_service
+    print("[DEBUG] 📅 Réinitialisation journalière du quota (1500 requêtes).")
     REQUETES_RESTANTES = LIMITE_QUOTA
     is_out_of_service = False
     await client.change_presence(status=discord.Status.online)
-    print("Quota journalier réinitialisé.")
 
 # ==========================================
 # 4. ÉVÉNEMENTS DISCORD
 # ==========================================
 @client.event
 async def on_ready():
-    print(f'=== {client.user} est connecté et opérationnel (Gemini 1.5 Flash) ===')
+    print(f'=== {client.user} est connecté et opérationnel (Gemini 2.5 Flash) ===')
     if not presence_manager.is_running(): presence_manager.start()
     if not status_updater.is_running(): status_updater.start()
     if not reset_quota.is_running(): reset_quota.start()
@@ -219,34 +239,53 @@ async def on_ready():
 @client.event
 async def on_message(message):
     global is_afk, pending_mentions, is_out_of_service
-    # 4.1 Matrice de Décision : Message de lui-même -> Ignoré
-    if message.author == client.user or is_out_of_service: return
+    
+    if message.author == client.user: 
+        return
+    
+    if is_out_of_service: 
+        return
 
-    # Remplissage espionnage global
     nom_salon = f"#{message.channel.name}" if message.guild else "MP"
+    est_mentionne = client.user in message.mentions
+    est_un_mp = message.guild is None
+
+    # Mémorisation
     extrait_texte = message.content[:50].replace('\n', ' ') 
     memoire_globale.append((time.time(), f"{message.author.display_name} dans {nom_salon} a dit '{extrait_texte}...'"))
 
-    est_mentionne = client.user in message.mentions
-    # 4.1 Matrice de Décision : Message Privé
-    est_un_mp = message.guild is None
+    if est_mentionne:
+        print(f"[DEBUG] 🎯 PING direct reçu de {message.author.display_name} dans {nom_salon}.")
 
-    # Gestion de l'AFK
+    # Gestion de l'AFK : si mentionné, on le met de côté
     if is_afk:
-        if est_mentionne: pending_mentions.append(message)
+        if est_mentionne:
+            print(f"[DEBUG] Jambon est AFK. Mention de {message.author.display_name} mise en file d'attente.")
+            pending_mentions.append(message)
+        else:
+            print(f"[DEBUG] Message ignoré car Jambon est AFK.")
         return
 
-    # 4.1 Matrice de Décision : DM ou Mention (100%) ou Incruste (10%)
-    if est_un_mp or est_mentionne or (random.random() < 0.10):
+    # Matrice de Décision
+    if est_un_mp or est_mentionne:
+        print(f"[DEBUG] Déclenchement de la réponse : C'est un MP ou une Mention (100% de chance).")
         await generer_reponse(message, est_mentionne)
     
-    # 4.3 Le Faux Départ (Typing Bait)
-    elif random.random() < 0.02:
+    elif random.random() < 0.10: # 10% L'Incruste
+        print(f"[DEBUG] 🎲 Déclenchement de la réponse : L'Incruste Spontanée (10% de chance atteinte).")
+        await generer_reponse(message, est_mentionne)
+    
+    elif random.random() < 0.02: # 2% Faux Départ
+        print("[DEBUG] 😈 Déclenchement de la réponse : Faux départ (Typing Bait).")
         try:
             async with message.channel.typing():
                 await asyncio.sleep(random.uniform(2, 4))
+            print("[DEBUG] Faux départ terminé. Rien n'a été envoyé.")
         except:
             pass
+    else:
+        # Message classique ignoré (silencieux)
+        pass
 
 @client.event
 async def on_raw_reaction_add(payload):
@@ -254,29 +293,32 @@ async def on_raw_reaction_add(payload):
     if is_out_of_service or is_afk or payload.user_id == client.user.id:
         return
         
-    # 4.4 L'Effet Mouton (Reaction Mirroring) : 15% de chance
-    if random.random() < 0.15:
+    if random.random() < 0.15: # 15% Effet Mouton
+        print(f"[DEBUG] 🐑 Effet Mouton déclenché sur un message.")
         try:
             channel = await client.fetch_channel(payload.channel_id)
             message = await channel.fetch_message(payload.message_id)
             
             await asyncio.sleep(random.uniform(1.5, 4.0))
             
-            # Soit il copie (50%), soit il génère un emoji via l'IA (50%)
             if random.random() < 0.5:
+                print(f"[DEBUG] Mimétisme : Jambon copie l'émoji exact ({payload.emoji}).")
                 await message.add_reaction(payload.emoji)
             else:
+                print(f"[DEBUG] Mimétisme IA : Jambon réfléchit à un émoji adapté...")
                 try:
                     res = await client_gemini.aio.models.generate_content(
                         model=MODEL_NAME,
                         contents=f"Trouve un seul emoji pertinent (uniquement l'emoji, rien d'autre) pour réagir à ce message. Idéalement sarcasme, gaming, charcuterie : {message.content}"
                     )
                     emoji_ia = res.text.strip()
+                    print(f"[DEBUG] Mimétisme IA réussi : Émoji trouvé '{emoji_ia}'.")
                     await message.add_reaction(emoji_ia)
                     REQUETES_RESTANTES -= 1
-                except:
-                    await message.add_reaction(payload.emoji) # Fallback si IA fail
-        except:
-            pass
+                except Exception as e:
+                    print(f"[DEBUG] Mimétisme IA échoué ({e}). Fallback sur la copie de l'émoji.")
+                    await message.add_reaction(payload.emoji) 
+        except Exception as e:
+            print(f"[DEBUG] Erreur globale de l'Effet Mouton : {e}")
 
 client.run(TOKEN)
