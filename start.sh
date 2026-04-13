@@ -31,7 +31,7 @@ source venv/bin/activate
 # 3. Installation des dépendances Python
 echo "Vérification des paquets Python..."
 pip install --upgrade pip > /dev/null
-pip install discord.py google-generativeai python-dotenv > /dev/null
+pip install discord.py google-genai python-dotenv > /dev/null
 
 # 4. Vérification du fichier .env
 if [ ! -f ".env" ]; then
