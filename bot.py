@@ -1,5 +1,6 @@
 import discord
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 import os
 import random
 import asyncio
@@ -15,11 +16,16 @@ load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
 GEMINI_KEY = os.getenv('GEMINI_API_KEY')
 
-if not TOKEN or not GEMINI_KEY:
-    print("ERREUR CRITIQUE: Tokens manquants dans le fichier .env")
+if not TOKEN or TOKEN == "TON_TOKEN_DISCORD_ICI":
+    print("ERREUR CRITIQUE: Tu n'as pas mis ton vrai Token Discord dans le fichier .env !")
+    exit(1)
+if not GEMINI_KEY or GEMINI_KEY == "TA_CLE_API_GEMINI_ICI":
+    print("ERREUR CRITIQUE: Tu n'as pas mis ta vraie clé Gemini dans le fichier .env !")
     exit(1)
 
-genai.configure(api_key=GEMINI_KEY)
+# Nouveau client Gemini (Nouvelle API)
+client_gemini = genai.Client(api_key=GEMINI_KEY)
+MODEL_NAME = "gemini-2.0-flash" # Mis à jour pour éviter l'erreur 404
 
 # --- CONFIGURATION JAMBON ---
 LIMITE_QUOTA = 1500 
@@ -41,9 +47,8 @@ Tu vas recevoir les messages sous ce format : [Bruit de fond : <Contexte>] [Lieu
 - NE RÉPÈTE JAMAIS le bloc entre crochets dans tes réponses. Agis naturellement.
 """
 
-model = genai.GenerativeModel(
-    model_name="gemini-1.5-flash",
-    system_instruction=system_instruction
+config_gemini = types.GenerateContentConfig(
+    system_instruction=system_instruction,
 )
 
 # --- VARIABLES D'ÉTAT ---
@@ -54,11 +59,11 @@ last_channel_id = None
 last_interaction_time = 0
 
 chat_sessions = {}
-memoire_globale = deque(maxlen=4) # Garde les 4 derniers messages du serveur
+memoire_globale = deque(maxlen=4) 
 
 intents = discord.Intents.default()
 intents.message_content = True
-intents.reactions = True # Nécessaire pour l'effet mouton (Reaction Mirroring)
+intents.reactions = True 
 client = discord.Client(intents=intents)
 
 # ==========================================
@@ -71,48 +76,41 @@ async def generer_reponse(message, est_mentionne, prompt_special=None):
 
     REQUETES_RESTANTES -= 1
     
-    # 2.1 Formatage Spatio-Temporel
     nom_auteur = message.author.display_name
     nom_lieu = f"#{message.channel.name}" if message.guild else "MP"
     texte_brut = prompt_special if prompt_special else message.content.replace(f'<@{client.user.id}>', '').strip()
     
-    # Création du contexte récent temporel
     contexte_recent_list = []
     maintenant = time.time()
     for timestamp, msg_texte in memoire_globale:
         delai_minutes = int((maintenant - timestamp) / 60)
-        if delai_minutes <= 120: # On ignore les messages de plus de 2 heures
+        if delai_minutes <= 120: 
             temps_str = "à l'instant" if delai_minutes == 0 else f"il y a {delai_minutes} min"
             contexte_recent_list.append(f"[{temps_str}] {msg_texte}")
             
     contexte_recent = " | ".join(contexte_recent_list) if contexte_recent_list else "Le serveur est calme depuis un moment."
     
-    # Injection des métadonnées
     contenu_enrichi = f"[Bruit de fond : {contexte_recent}] [Lieu actuel : {nom_lieu} | Auteur : {nom_auteur}] {texte_brut}"
 
     channel_id = message.channel.id
     if channel_id not in chat_sessions:
-        chat_sessions[channel_id] = model.start_chat(history=[])
+        chat_sessions[channel_id] = client_gemini.chats.create(model=MODEL_NAME, config=config_gemini)
 
     try:
-        # Délai de lecture
         await asyncio.sleep(random.uniform(1, 3))
         
         async with message.channel.typing():
             response = chat_sessions[channel_id].send_message(contenu_enrichi)
             
-            # Délai de frappe proportionnel (Dynamique)
             longueur_reponse = len(response.text)
-            temps_frappe = max(2.0, min(10.0, longueur_reponse * 0.04)) # Entre 2 et 10 secondes selon la taille
+            temps_frappe = max(2.0, min(10.0, longueur_reponse * 0.04)) 
             await asyncio.sleep(temps_frappe)
             
-            # Envoi
             if est_mentionne:
                 await message.reply(response.text)
             else:
                 await message.channel.send(response.text)
             
-            # Mise à jour des pointeurs d'activité
             last_channel_id = channel_id
             last_interaction_time = time.time()
             
@@ -126,7 +124,6 @@ async def generer_reponse(message, est_mentionne, prompt_special=None):
 async def presence_manager():
     global is_afk, pending_mentions, last_channel_id, last_interaction_time, REQUETES_RESTANTES, is_out_of_service
     
-    # 3.1 GESTION DU QUOTA (Déconnexion de fatigue)
     if REQUETES_RESTANTES < 10 and not is_out_of_service:
         if not is_afk and last_channel_id and (time.time() - last_interaction_time) < 300:
             channel = client.get_channel(last_channel_id)
@@ -140,14 +137,16 @@ async def presence_manager():
 
     if is_out_of_service: return
 
-    # 3.2 MODE AFK
     if not is_afk and random.random() < 0.15:
-        # Faux message de départ si discussion récente
         if last_channel_id and (time.time() - last_interaction_time) < 300:
             channel = client.get_channel(last_channel_id)
             if channel:
                 try:
-                    res = model.generate_content("Dis que tu t'absentes vite fait (style Jambon gamer).")
+                    res = client_gemini.models.generate_content(
+                        model=MODEL_NAME,
+                        contents="Dis que tu t'absentes vite fait (style Jambon gamer).",
+                        config=config_gemini
+                    )
                     await channel.send(res.text)
                     REQUETES_RESTANTES -= 1
                 except:
@@ -156,14 +155,11 @@ async def presence_manager():
         is_afk = True
         await client.change_presence(status=discord.Status.idle)
         
-        # Durée de l'absence
         await asyncio.sleep(random.randint(300, 1200))
         
-        # Retour
         is_afk = False
         await client.change_presence(status=discord.Status.online)
         
-        # Rattrapage des mentions
         if pending_mentions:
             for msg in pending_mentions[-2:]:
                 await generer_reponse(msg, est_mentionne=True)
@@ -202,46 +198,36 @@ async def on_message(message):
     global is_afk, pending_mentions, is_out_of_service
     if message.author == client.user or is_out_of_service: return
 
-    # Remplissage de la mémoire globale
     nom_salon = f"#{message.channel.name}" if message.guild else "MP"
     extrait_texte = message.content[:50].replace('\n', ' ') 
     memoire_globale.append((time.time(), f"{message.author.display_name} dans {nom_salon} a dit '{extrait_texte}...'"))
 
-    # Conditions de réponse
     est_mentionne = client.user in message.mentions
     est_un_mp = message.guild is None
 
-    # Si AFK, on garde la mention pour plus tard
     if is_afk:
         if est_mentionne: pending_mentions.append(message)
         return
 
-    # Priorité: MP et Mentions (100%), Incruste (10%)
     if est_un_mp or est_mentionne or (random.random() < 0.10):
         await generer_reponse(message, est_mentionne)
     
-    # Le Faux Départ (Typing Bait) - 2% de chance si le bot n'a pas répondu
     elif random.random() < 0.02:
         try:
             async with message.channel.typing():
                 await asyncio.sleep(random.uniform(2, 5))
-            # S'arrête d'écrire et n'envoie rien (la flemme)
         except:
             pass
 
 @client.event
 async def on_raw_reaction_add(payload):
-    # L'Effet Mouton (Reaction Mirroring)
     if is_out_of_service or is_afk or payload.user_id == client.user.id:
         return
         
-    # 15% de chance de suivre un emoji posé par quelqu'un d'autre
     if random.random() < 0.15:
         try:
             channel = await client.fetch_channel(payload.channel_id)
             message = await channel.fetch_message(payload.message_id)
-            
-            # Délai humain avant de cliquer sur la réaction
             await asyncio.sleep(random.uniform(1.5, 4.0))
             await message.add_reaction(payload.emoji)
         except:
