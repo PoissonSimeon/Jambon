@@ -25,7 +25,7 @@ if not GEMINI_KEY or GEMINI_KEY == "TA_CLE_API_GEMINI_ICI":
 
 # Nouveau client Gemini (Nouvelle API)
 client_gemini = genai.Client(api_key=GEMINI_KEY)
-MODEL_NAME = "gemini-2.0-flash" # Mis à jour pour éviter l'erreur 404
+MODEL_NAME = "gemini-2.5-flash"
 
 # --- CONFIGURATION JAMBON ---
 LIMITE_QUOTA = 1500 
