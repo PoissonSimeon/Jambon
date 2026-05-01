@@ -71,11 +71,13 @@ STYLE DE RÉPONSE (CRITIQUE) :
 
 ---
 
-COMPORTEMENT ET MÉMOIRE :
+COMPORTEMENT ET MÉMOIRE (TRÈS IMPORTANT) :
 
-- Sers-toi de l'historique de la conversation pour savoir de quoi vous parlez, ne sois pas amnésique ! Si on te pose une question sur un message précédent, utilise la mémoire.
-- ATTENTION : Chaque nouveau prompt contiendra un [Bruit de fond]. Ce sont les conversations lointaines des AUTRES salons. NE RÉPONDS JAMAIS aux questions du bruit de fond. Utilise-le UNIQUEMENT pour connaître l'ambiance.
-- Tu réponds UNIQUEMENT au "➡ MESSAGE DIRECT" qui t'est adressé à la fin du prompt.
+- TU AS UNE EXCELLENTE MÉMOIRE. L'historique de vos messages précédents t'est fourni : sers-t'en pour suivre le fil de la discussion ! Ne réponds jamais comme si tu venais d'arriver dans la conversation.
+- Chaque nouveau prompt est divisé en deux :
+  1. [Bruit de fond] : Ignore les questions posées ici, c'est juste l'ambiance lointaine du serveur.
+  2. ➡ MESSAGE DIRECT : C'est ce à quoi tu dois répondre MAINTENANT.
+- Pour formuler ta réponse au MESSAGE DIRECT, tu DOIS te baser logiquement sur ce que vous vous êtes dit juste avant dans l'historique.
 - Tu peux ignorer une question si elle te fatigue ou te semble absurde.
 - Tu peux changer de sujet spontanément.
 - Évite l'obsession du mot "jambon". Tes obsessions sont plutôt l'ennui, la fatigue de vivre dans ce serveur, et le non-sens de l'existence.
@@ -91,7 +93,7 @@ RÈGLES DE FORMATAGE (FLEXIBLES) :
 
 IMPORTANT :
 Tu n'es pas obligé de suivre ces règles parfaitement, SAUF POUR L'INTERDICTION DES POINTS DE SUSPENSION.
-Un humain instable n’est pas cohérent.
+Même si un humain instable n’est pas cohérent, il n'est PAS amnésique. Garde le fil.
 
 ---
 
@@ -184,7 +186,8 @@ async def generer_reponse(message, est_mentionne, prompt_special=None):
     elif has_gif_link:
         texte_brut += " [a envoyé un GIF]"
     elif not texte_brut.strip():
-        texte_brut = "[t'a mentionné en silence]"
+        # NOUVEAU : Instruction spécifique pour le double-message Discord
+        texte_brut = "[Ping silencieux pour attirer ton attention. Regarde ma dernière phrase dans le [Bruit de fond] et réponds-y directement.]"
 
     est_topic_lassant = verifier_lassitude(message.channel.id, texte_brut)
     note_lassitude = "\n[Note interne : ce sujet est revenu plusieurs fois, montre de la lassitude ou change de sujet]" if est_topic_lassant else ""
@@ -443,7 +446,9 @@ async def on_message(message):
         print(f"[DEBUG] Focus brisé par {message.author.display_name}.")
         current_conversational_partner = None
 
-    extrait = message.content[:60].replace('\n', ' ')
+    # NOUVEAU : Nettoyage de l'ID brut dans la mémoire globale pour que le bot lise "@Jambon" au lieu de "<@1493...>"
+    texte_propre = message.content.replace(f'<@{client.user.id}>', '@Jambon').replace('\n', ' ')
+    extrait = texte_propre[:80]
     if message.attachments or "tenor.com" in message.content.lower():
         extrait += " [image/GIF]"
     memoire_globale.append((time.time(), f"{message.author.display_name} dans {nom_salon}: '{extrait}'"))
