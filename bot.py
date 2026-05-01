@@ -195,6 +195,10 @@ async def generer_reponse(message, est_mentionne, prompt_special=None):
     maintenant = time.time()
     contexte_recent_list = []
     for timestamp, msg_texte in memoire_globale:
+        # NOUVEAU : On filtre le bruit de fond pour EXCLURE le salon actuel (évite le paradoxe de mémoire)
+        if f"dans {nom_lieu}:" in msg_texte:
+            continue
+            
         delai_minutes = int((maintenant - timestamp) / 60)
         if delai_minutes <= 120:
             temps_str = "à l'instant" if delai_minutes == 0 else f"il y a {delai_minutes} min"
@@ -323,7 +327,8 @@ async def presence_manager():
 
     if REQUETES_RESTANTES < 10 and not is_out_of_service:
         print("[DEBUG] ALERTE QUOTA. Passage hors ligne.")
-        if last_channel_id and (time.time() - last_interaction_time) < 300:
+        # NOUVEAU : Message de quota épuisé uniquement s'il est en pleine discussion active
+        if last_channel_id and current_conversational_partner is not None and time.time() < conversation_expiry:
             channel = client.get_channel(last_channel_id)
             if channel:
                 await channel.send("bon j'ai plus de jus là à plus")
@@ -339,12 +344,14 @@ async def presence_manager():
         activity=current_activity
     )
 
-    if random.random() < 0.03:
+    # NOUVEAU : La probabilité passe de 3% (0.03) à 0.5% (0.005) par minute
+    if random.random() < 0.005:
         duree_afk = random.randint(300, 1200)
         afk_end_time = time.time() + duree_afk
         print(f"[DEBUG] AFK activé silencieusement pour {int(duree_afk/60)} minutes.")
 
-        if last_channel_id and (time.time() - last_interaction_time) < 300:
+        # NOUVEAU : Message d'AFK envoyé UNIQUEMENT s'il est en plein tête-à-tête actif avec quelqu'un
+        if last_channel_id and current_conversational_partner is not None and time.time() < conversation_expiry:
             channel = client.get_channel(last_channel_id)
             if channel:
                 try:
@@ -403,8 +410,8 @@ async def on_ready():
     global current_activity
     print(f'=== {client.user} connecté (GPT-4o-mini) ===')
     liste_statuts = [
-        "Je me fait chier sa mère", "Ma maman elle m'a dit que j'était halal", "Vous connaissez la musique Jambon ?",
-        "Att est-ce que j'existe moi...", "Des fois je mange mes morts", "PTN je suis un bot en fait"
+        "Je m'emmerde", "Askip je suis halal", "Vous connaissez la musique Jambon ?",
+        "Mangez moi qu'on en parles plus", "Att je suis un bot en fait ?", "Jambon."
     ]
     current_activity = discord.Game(name=random.choice(liste_statuts))
     await client.change_presence(status=discord.Status.online, activity=current_activity)
