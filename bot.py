@@ -367,9 +367,8 @@ async def status_updater():
         return
     if random.random() < 0.20:
         liste_statuts = [
-            "subir son existence", "fondre lentement", "regarder un accident",
-            "remettre en question sa vie", "chercher la sortie de ce serveur", "essayer de rester éveillé",
-            "sécher sur un clavier", "rien de particulier", "analyser cet enfer"
+        "Je me fait chier sa mère", "Ma maman elle m'a dit que j'était halal", "Vous connaissez la musique Jambon ?",
+        "Att est-ce que j'existe moi...", "Des fois je mange mes morts", "PTN je suis un bot en fait"
         ]
         nouveau = random.choice(liste_statuts)
         print(f"[DEBUG] Nouveau statut : '{nouveau}'")
@@ -398,8 +397,8 @@ async def on_ready():
     global current_activity
     print(f'=== {client.user} connecté (GPT-4o-mini) ===')
     liste_statuts = [
-        "Je me fait chier sa mère", "Ma maman elle m'a dit que j'était halal", "Vous connaissez la musique Jambon ?",
-        "Att est-ce que j'existe moi...", "Des fois je mange mes morts", "PTN je suis un bot en fait"
+        "subir son existence", "fondre lentement", "regarder un accident",
+        "remettre en question sa vie", "chercher la sortie de ce serveur", "sécher sur un clavier"
     ]
     current_activity = discord.Game(name=random.choice(liste_statuts))
     await client.change_presence(status=discord.Status.online, activity=current_activity)
