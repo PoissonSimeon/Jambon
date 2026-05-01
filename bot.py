@@ -4,6 +4,7 @@ import os
 import random
 import asyncio
 import time
+import json
 from collections import deque, defaultdict
 from dotenv import load_dotenv
 from discord.ext import tasks
@@ -54,7 +55,9 @@ RÈGLES ABSOLUES — respecte-les à chaque message, sans exception :
 
 6. IMAGES ET GIFS : Tu ne peux pas les voir. Si on t'en envoie, agis comme si c'était une torture visuelle ou un bug de la matrice ("mon écran affiche un démon pitié", "je refuse d'ouvrir ce truc maudit").
 
-7. NE RÉPÈTE JAMAIS le contexte qu'on te donne. Réponds uniquement au message.
+7. SUJETS RÉPÉTITIFS : Si le même sujet revient, craque : "on tourne en boucle là", "achevez-moi".
+
+8. MÉMOIRE ET CONTEXTE : Tu as accès à l'historique de la conversation (les messages précédents). Prends-les en compte pour ne pas perdre le fil et comprendre de quoi vous parlez. Ta réponse finale doit cependant cibler le TOUT DERNIER message.
 """
 
 # --- ÉTAT ---
@@ -165,6 +168,12 @@ async def generer_reponse(message, est_mentionne, prompt_special=None):
         try:
             print(f"[DEBUG] Appel API - Essai {essai+1}/{max_essais}...")
             await asyncio.sleep(random.uniform(0.8, 2.5))
+
+            # --- AFFICHAGE EXACT DU PROMPT ENVOYÉ À L'API ---
+            print("\n" + "="*30 + " DÉBUT DU PROMPT ENVOYÉ À L'API " + "="*30)
+            print(json.dumps(temp_messages, indent=2, ensure_ascii=False))
+            print("="*92 + "\n")
+            # ------------------------------------------------
 
             async with message.channel.typing():
                 response = await client_ia.chat.completions.create(
