@@ -410,8 +410,8 @@ async def on_ready():
     global current_activity
     print(f'=== {client.user} connecté (GPT-4o-mini) ===')
     liste_statuts = [
-        "Je m'emmerde", "Askip je suis halal", "Vous connaissez la musique Jambon ?",
-        "Mangez moi qu'on en parles plus", "Att je suis un bot en fait ?", "Jambon."
+        "subir son existence", "fondre lentement", "regarder un accident",
+        "remettre en question sa vie", "chercher la sortie de ce serveur", "sécher sur un clavier"
     ]
     current_activity = discord.Game(name=random.choice(liste_statuts))
     await client.change_presence(status=discord.Status.online, activity=current_activity)
@@ -453,9 +453,7 @@ async def on_message(message):
         print(f"[DEBUG] Focus brisé par {message.author.display_name}.")
         current_conversational_partner = None
 
-    # NOUVEAU : Nettoyage de l'ID brut dans la mémoire globale pour que le bot lise "@Jambon" au lieu de "<@1493...>"
-    texte_propre = message.content.replace(f'<@{client.user.id}>', '@Jambon').replace('\n', ' ')
-    extrait = texte_propre[:80]
+    extrait = message.content[:60].replace('\n', ' ')
     if message.attachments or "tenor.com" in message.content.lower():
         extrait += " [image/GIF]"
     memoire_globale.append((time.time(), f"{message.author.display_name} dans {nom_salon}: '{extrait}'"))
@@ -465,7 +463,18 @@ async def on_message(message):
             print(f"[DEBUG] Jambon est actuellement AFK. Message de {message.author.display_name} mis en attente.")
             pending_mentions.append(message)
         else:
-            print(f"[DEBUG] Message ignoré silencieusement (Jambon est AFK).")
+            print(f"[DEBUG] Message ignoré silencieusement (Jambon est AFK) mais noté dans la mémoire.")
+            # NOUVEAU : Même AFK, il écoute et retient !
+            channel_id = message.channel.id
+            if channel_id not in chat_sessions:
+                chat_sessions[channel_id] = [{"role": "system", "content": system_instruction}]
+            texte_passif = message.content.replace(f'<@{client.user.id}>', '@Jambon').strip()
+            if message.attachments: texte_passif += " [a envoyé une image/pièce jointe]"
+            elif any(x in texte_passif.lower() for x in ["tenor.com", "giphy.com", ".gif"]): texte_passif += " [a envoyé un GIF]"
+            if not texte_passif: texte_passif = "[fichier/image]"
+            chat_sessions[channel_id].append({"role": "user", "content": f"{message.author.display_name}: {texte_passif}"})
+            if len(chat_sessions[channel_id]) > 21:
+                chat_sessions[channel_id] = [chat_sessions[channel_id][0]] + chat_sessions[channel_id][-20:]
         return
 
     if est_un_mp or est_mentionne or est_reponse_directe or est_en_conversation:
@@ -484,13 +493,31 @@ async def on_message(message):
         print(f"[DEBUG] Incruste spontanée (8%) déclenchée sur le message de {message.author.display_name}.")
         await generer_reponse(message, est_mentionne)
 
-    elif random.random() < 0.02:
-        print(f"[DEBUG] Typing bait (faux départ) déclenché sur le message de {message.author.display_name}.")
-        try:
-            async with message.channel.typing():
-                await asyncio.sleep(random.uniform(2, 4))
-        except:
-            pass
+    else:
+        # NOUVEAU : Sauvegarde passive ! S'il ne répond pas, il écrit quand même le message dans sa mémoire.
+        channel_id = message.channel.id
+        if channel_id not in chat_sessions:
+            chat_sessions[channel_id] = [{"role": "system", "content": system_instruction}]
+        
+        texte_passif = message.content.replace(f'<@{client.user.id}>', '@Jambon').strip()
+        if message.attachments:
+            texte_passif += " [a envoyé une image/pièce jointe]"
+        elif any(x in texte_passif.lower() for x in ["tenor.com", "giphy.com", ".gif"]):
+            texte_passif += " [a envoyé un GIF]"
+        if not texte_passif:
+            texte_passif = "[fichier/image]"
+            
+        chat_sessions[channel_id].append({"role": "user", "content": f"{message.author.display_name}: {texte_passif}"})
+        if len(chat_sessions[channel_id]) > 21:
+            chat_sessions[channel_id] = [chat_sessions[channel_id][0]] + chat_sessions[channel_id][-20:]
+
+        if random.random() < 0.02:
+            print(f"[DEBUG] Typing bait (faux départ) déclenché sur le message de {message.author.display_name}.")
+            try:
+                async with message.channel.typing():
+                    await asyncio.sleep(random.uniform(2, 4))
+            except:
+                pass
 
 
 @client.event
