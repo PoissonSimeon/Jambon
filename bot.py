@@ -398,8 +398,8 @@ async def on_ready():
     global current_activity
     print(f'=== {client.user} connecté (GPT-4o-mini) ===')
     liste_statuts = [
-        "subir son existence", "fondre lentement", "regarder un accident",
-        "remettre en question sa vie", "chercher la sortie de ce serveur", "sécher sur un clavier"
+        "Je me fait chier sa mère", "Ma maman elle m'a dit que j'était halal", "Vous connaissez la musique Jambon ?",
+        "Att est-ce que j'existe moi...", "Des fois je mange mes morts", "PTN je suis un bot en fait"
     ]
     current_activity = discord.Game(name=random.choice(liste_statuts))
     await client.change_presence(status=discord.Status.online, activity=current_activity)
