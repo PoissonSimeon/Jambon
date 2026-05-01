@@ -235,11 +235,21 @@ async def presence_manager():
 
 @tasks.loop(hours=6)
 async def status_updater():
-    liste_statuts = ["Sur mon tel", "En train de manger", "Dodo la", "Sur LoL (a l'aide)", "Fatigué", "Check le frigo", "Gaming"]
+    # LISTE MODIFIÉE POUR DISCORD.GAME ("Joue à...")
+    liste_statuts = [
+        "scroller sur son tel", 
+        "manger du saucisson", 
+        "faire la sieste", 
+        "League of Legends", 
+        "essayer de rester éveillé", 
+        "inspecter le frigo", 
+        "un jeu obscur"
+    ]
     if not is_out_of_service and random.random() < 0.15:
         nouveau_statut = random.choice(liste_statuts)
-        print(f"[DEBUG] 🔄 Changement de statut de profil : '{nouveau_statut}'")
-        activity = discord.CustomActivity(name=nouveau_statut) if nouveau_statut else None
+        print(f"[DEBUG] 🔄 Changement de statut de profil : 'Joue à {nouveau_statut}'")
+        # Utilisation de discord.Game pour forcer l'affichage sur tous les clients Discord
+        activity = discord.Game(name=nouveau_statut) if nouveau_statut else None
         current_status = discord.Status.idle if is_afk else discord.Status.online
         await client.change_presence(status=current_status, activity=activity)
 
@@ -258,11 +268,19 @@ async def reset_quota():
 async def on_ready():
     print(f'=== {client.user} est connecté et opérationnel (OpenAI GPT-4o-mini) ===')
     
-    # Humeur garantie au démarrage
-    liste_statuts = ["Sur mon tel", "En train de manger", "Dodo la", "Sur LoL (a l'aide)", "Fatigué", "Check le frigo", "Gaming"]
+    # Humeur garantie au démarrage avec discord.Game
+    liste_statuts = [
+        "scroller sur son tel", 
+        "manger du saucisson", 
+        "faire la sieste", 
+        "League of Legends", 
+        "essayer de rester éveillé", 
+        "inspecter le frigo", 
+        "un jeu obscur"
+    ]
     statut_initial = random.choice(liste_statuts)
-    print(f"[DEBUG] 🚀 Humeur initiale au démarrage : '{statut_initial}'")
-    await client.change_presence(status=discord.Status.online, activity=discord.CustomActivity(name=statut_initial))
+    print(f"[DEBUG] 🚀 Humeur initiale au démarrage : 'Joue à {statut_initial}'")
+    await client.change_presence(status=discord.Status.online, activity=discord.Game(name=statut_initial))
     
     if not presence_manager.is_running(): presence_manager.start()
     if not status_updater.is_running(): status_updater.start()
