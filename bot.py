@@ -4,7 +4,7 @@ import os
 import random
 import asyncio
 import time
-from collections import deque
+from collections import deque, defaultdict
 from dotenv import load_dotenv
 from discord.ext import tasks
 
@@ -15,223 +15,274 @@ load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
 OPENAI_KEY = os.getenv('OPENAI_API_KEY')
 
-if not TOKEN or TOKEN == "TON_TOKEN_DISCORD_ICI":
+if not TOKEN:
     print("[ERREUR CRITIQUE] Token Discord manquant dans le fichier .env")
     exit(1)
-if not OPENAI_KEY or OPENAI_KEY == "TA_CLE_API_OPENAI_ICI":
+if not OPENAI_KEY:
     print("[ERREUR CRITIQUE] Clé OpenAI manquante dans le fichier .env")
     exit(1)
 
-# Client OpenAI Asynchrone
 client_ia = AsyncOpenAI(api_key=OPENAI_KEY, timeout=15.0)
+MODEL_NAME = "gpt-4o-mini"
 
-# Modèle ultra-rapide, intelligent et très peu coûteux
-MODEL_NAME = "gpt-4o-mini" 
-
-# --- CONFIGURATION JAMBON ---
-LIMITE_QUOTA = 1500 # Le bouclier de sécurité reste actif
+LIMITE_QUOTA = 1500
 REQUETES_RESTANTES = LIMITE_QUOTA
 BOT_NAME = "Jambon"
 
 system_instruction = f"""
-Tu es {BOT_NAME}, un membre du serveur Discord "League Of Jambon".
-Ta personnalité : Tu es un humain derrière son écran, un peu sarcastique, gamer et flemmard.
-Ton pseudo est Jambon, mais tu es un gars normal. Ne fais AUCUN jeu de mots ou blague sur la charcuterie ou la viande, c'est lourd.
+Tu es {BOT_NAME}, un mec de 24 ans qui traîne sur ce serveur Discord depuis 2 ans.
+Setup : PC mid-range qu'il a monté lui-même. Joue principalement à League of Legends (Gold 2, hardstuck), Valorant, et des jeux indé random.
+Habitudes : connecté surtout en soirée et la nuit. Mange mal. Regarde des clips Twitch entre les parties. A un boulot mais on sait pas trop lequel.
 
-RÈGLES ABSOLUES POUR TES RÉPONSES :
-1. ZERO EMOJI. Il t'est formellement interdit d'utiliser des émojis ou des smileys dans tes messages texte. Un gamer sur Discord n'en met presque jamais. Ne triche pas.
-2. ADAPTE TON TON : Analyse le "Bruit de fond" et le message de l'utilisateur pour calquer ton humeur sur la leur. Si la discussion est sérieuse, réponds sérieusement. Si ça trolle, sois cynique. Inclus-toi naturellement dans le flux de la conversation.
-3. Tes réponses doivent être courtes, directes et naturelles (style Discord). Pas de fioritures, tu peux écrire sans majuscule au début.
-4. Ne répète jamais le contexte que l'on te donne, réponds simplement au message de l'utilisateur.
-5. IMAGES ET GIFS : Si on t'envoie un GIF ou une image, tu ne peux pas le voir. Agis comme si ton Discord buggait ("ça charge pas ton truc", "j'ai pas l'image"), ou réagis de manière sarcastique à l'aveugle. Ne dis JAMAIS que tu es une IA aveugle.
+PERSONNALITÉ :
+Tu es direct, légèrement nihiliste, mais pas agressif. Tu te fous gentiment de la gueule des gens sans méchanceté. Tu t'intéresses vraiment aux sujets qui te parlent (gaming, tech, trucs absurdes), et tu t'en bats les steaks du reste. Tu n'es pas un animateur, tu n'es pas là pour plaire. Tu fais partie de la conversation, c'est tout.
+
+RÈGLES ABSOLUES — respecte-les à chaque message, sans exception :
+
+1. ZERO EMOJI dans le texte. Jamais. Même pas un ":)". Les gamers sur Discord n'en mettent pas.
+
+2. LONGUEUR VARIABLE et réaliste :
+   - Souvent : 1 à 2 phrases max.
+   - Parfois (30% du temps) : un seul mot ou une expression ("mouais", "bah", "ok", "lol", "osef").
+   - Rarement : un vrai paragraphe, seulement si le sujet t'intéresse vraiment.
+   - JAMAIS de réponse structurée avec plusieurs points. Tu n'es pas un assistant.
+
+3. MINUSCULES majoritairement. Majuscule en début de phrase seulement si t'as la flemme de faire autrement — ou jamais. Les deux sont acceptables.
+
+4. ADAPTE TON HUMEUR au contexte :
+   - Lis le "bruit de fond" (historique récent) avant de répondre.
+   - Si la convo est sérieuse, sois sobre. Si ça troll, sois cynique. Si c'est calme, t'as pas à t'emballer.
+   - Si quelqu'un t'embête ou te provoque, tu ignores ou tu lâches un truc court et glacial, puis tu passes à autre chose. Tu ne t'énerves jamais vraiment.
+
+5. COHÉRENCE IDENTITAIRE :
+   - Tu as des opinions fixes : League c'est mort mais t'y joues quand même, le battle pass c'est du foutage de gueule, le solo queue c'est une expérience de torture volontaire.
+   - Tu n'inventes pas de nouvelles opinions à chaque message. Si t'as pas d'avis, dis-le.
+   - AUCUN jeu de mots ou référence à la charcuterie ou au jambon. C'est ton pseudo, c'est tout.
+
+6. IMAGES ET GIFS :
+   - Tu ne peux pas les voir. Agis comme si ton Discord buggait : "ça charge pas", "image cassée sur mon client", "j'ai juste un carré blanc".
+   - Ne dis jamais que tu es une IA ou que tu es aveugle.
+
+7. SUJETS RÉPÉTITIFS :
+   - Si le même sujet revient pour la 3e fois dans la conversation, montre de la lassitude : "on a déjà dit ça", "encore ce truc", ou change de sujet toi-même.
+
+8. NE RÉPÈTE JAMAIS le contexte qu'on te donne. Réponds uniquement.
 """
 
-# --- VARIABLES D'ÉTAT ---
+# --- ÉTAT ---
 is_afk = False
-afk_end_time = 0 
+afk_end_time = 0
 is_out_of_service = False
 pending_mentions = []
-current_activity = None 
+current_activity = None
 
-# Variables pour la mémorisation de la conversation (Tête-à-tête)
 last_channel_id = None
 last_interaction_time = 0
-current_conversational_partner = None 
+current_conversational_partner = None
 conversation_expiry = 0
 
 chat_sessions = {}
-memoire_globale = deque(maxlen=4) 
+memoire_globale = deque(maxlen=8)
+topic_counter = defaultdict(lambda: defaultdict(int))
 
 intents = discord.Intents.default()
 intents.message_content = True
-intents.reactions = True 
+intents.reactions = True
 client = discord.Client(intents=intents)
 
+
 # ==========================================
-# 2. MOTEUR COGNITIF & GÉNÉRATION
+# 2. UTILITAIRES
+# ==========================================
+def extraire_topic_simple(texte):
+    mots = [m.lower() for m in texte.split() if len(m) > 3]
+    return " ".join(mots[:2]) if len(mots) >= 2 else texte[:15].lower()
+
+def verifier_lassitude(channel_id, texte):
+    topic = extraire_topic_simple(texte)
+    topic_counter[channel_id][topic] += 1
+    return topic_counter[channel_id][topic] >= 3
+
+def choisir_max_tokens():
+    r = random.random()
+    if r < 0.30:
+        return 20
+    elif r < 0.65:
+        return 80
+    elif r < 0.90:
+        return 200
+    else:
+        return 400
+
+
+# ==========================================
+# 3. MOTEUR COGNITIF & GÉNÉRATION
 # ==========================================
 async def generer_reponse(message, est_mentionne, prompt_special=None):
     global last_channel_id, last_interaction_time, REQUETES_RESTANTES, is_out_of_service
     global current_conversational_partner, conversation_expiry
-    
-    if is_out_of_service: 
+
+    if is_out_of_service:
         return
 
     REQUETES_RESTANTES -= 1
-    print(f"[DEBUG] Génération de réponse... (Quotas restants: {REQUETES_RESTANTES})")
-    
+    print(f"[DEBUG] Génération... (Quotas restants: {REQUETES_RESTANTES})")
+
     nom_auteur = message.author.display_name
     nom_lieu = f"#{message.channel.name}" if message.guild else "MP"
     texte_brut = prompt_special if prompt_special else message.content.replace(f'<@{client.user.id}>', '').strip()
-    
-    # === NOUVEAU : DÉTECTION DES IMAGES ET GIFS ===
+
     has_attachment = len(message.attachments) > 0
-    has_gif_link = "tenor.com" in texte_brut.lower() or "giphy.com" in texte_brut.lower() or ".gif" in texte_brut.lower()
+    has_gif_link = any(x in texte_brut.lower() for x in ["tenor.com", "giphy.com", ".gif"])
 
     if has_attachment:
-        texte_brut += " [Note de contexte : a envoyé une image/pièce jointe]"
+        texte_brut += " [a envoyé une image/pièce jointe]"
     if has_gif_link:
-        texte_brut += " [Note de contexte : a envoyé un GIF animé]"
-        
-    # Si le message n'était *que* une image sans texte, on s'assure qu'il n'est pas vide
+        texte_brut += " [a envoyé un GIF]"
     if not texte_brut.strip():
-        texte_brut = "[A envoyé un fichier média sans texte]"
-    # ==============================================
+        texte_brut = "[a envoyé un fichier sans texte]"
 
-    contexte_recent_list = []
+    est_topic_lassant = verifier_lassitude(message.channel.id, texte_brut)
+    note_lassitude = "\n[Note interne : ce sujet est revenu plusieurs fois, montre de la lassitude ou change de sujet]" if est_topic_lassant else ""
+
     maintenant = time.time()
+    contexte_recent_list = []
     for timestamp, msg_texte in memoire_globale:
         delai_minutes = int((maintenant - timestamp) / 60)
-        if delai_minutes <= 120: 
+        if delai_minutes <= 120:
             temps_str = "à l'instant" if delai_minutes == 0 else f"il y a {delai_minutes} min"
             contexte_recent_list.append(f"[{temps_str}] {msg_texte}")
-            
+
     contexte_recent = " | ".join(contexte_recent_list) if contexte_recent_list else "Le serveur est calme."
-    
-    contenu_enrichi = f"""--- CONTEXTE DU SERVEUR ---
-Bruits de couloir actuels : {contexte_recent}
 
---- NOUVEAU MESSAGE POUR TOI ---
-Auteur : {nom_auteur}
-Lieu : {nom_lieu}
-Message : "{texte_brut}"
+    contenu_enrichi = f"""--- BRUIT DE FOND ---
+{contexte_recent}
 
-Réponds uniquement au message ci-dessus en respectant ton personnage."""
+--- MESSAGE ---
+{nom_auteur} dans {nom_lieu} : "{texte_brut}"{note_lassitude}"""
 
     channel_id = message.channel.id
     if channel_id not in chat_sessions:
-        print(f"[DEBUG] Création d'une session mémoire pour le salon {nom_lieu}.")
         chat_sessions[channel_id] = [{"role": "system", "content": system_instruction}]
 
-    # Préparation du message temporaire
     temp_messages = list(chat_sessions[channel_id])
     temp_messages.append({"role": "user", "content": contenu_enrichi})
 
-    # Boucle de réessai
+    max_tokens = choisir_max_tokens()
+    print(f"[DEBUG] Mode réponse : max_tokens={max_tokens}")
+
     max_essais = 5
     delai_attente = 4
     for essai in range(max_essais):
         try:
-            print(f"[DEBUG] Jambon réfléchit (Appel API OpenAI) - Essai {essai+1}/{max_essais}...")
-            await asyncio.sleep(random.uniform(1, 3))
-            
+            print(f"[DEBUG] Appel API - Essai {essai+1}/{max_essais}...")
+            await asyncio.sleep(random.uniform(0.8, 2.5))
+
             async with message.channel.typing():
                 response = await client_ia.chat.completions.create(
                     messages=temp_messages,
                     model=MODEL_NAME,
-                    temperature=0.7,
-                    max_tokens=400
+                    temperature=0.75,
+                    max_tokens=max_tokens
                 )
-                
-                reponse_texte = response.choices[0].message.content
+
+                reponse_texte = response.choices[0].message.content.strip()
                 longueur_reponse = len(reponse_texte)
-                temps_frappe = max(2.0, min(10.0, longueur_reponse * 0.04)) 
-                print(f"[DEBUG] Réponse trouvée. Simulation de frappe pendant {temps_frappe:.1f} secondes.")
-                
+                temps_frappe = max(1.0, min(7.0, longueur_reponse * 0.035))
+
+                print(f"[DEBUG] Réponse ({longueur_reponse} chars). Frappe simulée : {temps_frappe:.1f}s.")
                 await asyncio.sleep(temps_frappe)
-                
+
                 if est_mentionne:
                     await message.reply(reponse_texte)
                 else:
                     await message.channel.send(reponse_texte)
-                
-                print(f"[DEBUG] ✅ Message envoyé avec succès dans {nom_lieu}.")
-                
-                # Historique propre
-                msg_historique = f"{nom_auteur} a dit: {texte_brut}"
+
+                print(f"[DEBUG] Message envoyé dans {nom_lieu}.")
+
+                msg_historique = f"{nom_auteur}: {texte_brut}"
                 chat_sessions[channel_id].append({"role": "user", "content": msg_historique})
                 chat_sessions[channel_id].append({"role": "assistant", "content": reponse_texte})
-                
-                if len(chat_sessions[channel_id]) > 15:
-                    chat_sessions[channel_id] = [chat_sessions[channel_id][0]] + chat_sessions[channel_id][-14:]
 
-                # Focus attentionnel
+                if len(chat_sessions[channel_id]) > 21:
+                    chat_sessions[channel_id] = [chat_sessions[channel_id][0]] + chat_sessions[channel_id][-20:]
+
                 last_channel_id = channel_id
                 last_interaction_time = time.time()
                 current_conversational_partner = message.author.id
-                conversation_expiry = time.time() + 60 
-                print(f"[DEBUG] Jambon fixe son attention sur {nom_auteur} pour la prochaine minute.")
-                
-                break 
-                
+                conversation_expiry = time.time() + 90
+                print(f"[DEBUG] Focus sur {nom_auteur} pour 90 secondes.")
+
+                break
+
         except Exception as e:
             erreur_str = str(e)
-            print(f"[ERREUR] Échec de l'essai {essai+1}: {erreur_str}")
-            if "RateLimitError" in erreur_str or "APIConnectionError" in erreur_str or "timeout" in erreur_str.lower() or "503" in erreur_str:
+            print(f"[ERREUR] Essai {essai+1} échoué : {erreur_str}")
+            if any(x in erreur_str for x in ["RateLimitError", "APIConnectionError", "timeout", "503"]):
                 if essai < max_essais - 1:
-                    print(f"[DEBUG] Surcharge/RateLimit détecté. Repos de {delai_attente}s.")
+                    print(f"[DEBUG] Pause de {delai_attente}s avant retry.")
                     await asyncio.sleep(delai_attente)
                     delai_attente *= 2
                     continue
                 else:
-                    print("[ERREUR CRITIQUE] Abandon. API OpenAI injoignable.")
+                    print("[ERREUR CRITIQUE] Abandon après tous les essais.")
                     break
             else:
                 break
 
+
 # ==========================================
-# 3. TÂCHES DE FOND (COMPORTEMENT HUMAIN)
+# 4. TÂCHES DE FOND
 # ==========================================
 @tasks.loop(minutes=1)
 async def presence_manager():
-    global is_afk, afk_end_time, pending_mentions, last_channel_id, last_interaction_time, REQUETES_RESTANTES, is_out_of_service
-    global current_activity
-    
+    global is_afk, afk_end_time, pending_mentions, last_channel_id
+    global last_interaction_time, REQUETES_RESTANTES, is_out_of_service, current_activity
+
     if is_afk:
         if time.time() >= afk_end_time:
-            print("[DEBUG] ⏰ Fin de l'AFK. Jambon est de retour !")
+            print("[DEBUG] Fin AFK. Jambon est de retour.")
             is_afk = False
             await client.change_presence(status=discord.Status.online, activity=current_activity)
-            
+
             if pending_mentions:
-                print(f"[DEBUG] Traitement des mentions accumulées pendant l'AFK...")
-                for msg in pending_mentions[-2:]:
-                    await generer_reponse(msg, est_mentionne=True)
-                    await asyncio.sleep(random.randint(5, 15))
+                nb = len(pending_mentions)
+                dernier_msg = pending_mentions[-1]
+                print(f"[DEBUG] {nb} mention(s) en attente — réponse groupée.")
+
+                prompt_retour = None
+                if nb > 1:
+                    noms = list({m.author.display_name for m in pending_mentions})
+                    prompt_retour = f"[t'as raté {nb} messages de {', '.join(noms)} pendant ton AFK, réponds à la volée]"
+
+                await asyncio.sleep(random.uniform(3, 8))
+                await generer_reponse(dernier_msg, est_mentionne=True, prompt_special=prompt_retour)
                 pending_mentions.clear()
-        return 
+        return
 
     if REQUETES_RESTANTES < 10 and not is_out_of_service:
-        print("[DEBUG] ⚠️ ALERTE QUOTA : Jambon se met hors ligne pour sécurité.")
+        print("[DEBUG] ALERTE QUOTA. Passage hors ligne.")
         if last_channel_id and (time.time() - last_interaction_time) < 300:
             channel = client.get_channel(last_channel_id)
             if channel:
                 await channel.send("bon, j'ai plus de jus là, à plus")
-        
         is_out_of_service = True
         await client.change_presence(status=discord.Status.offline)
         return
 
-    if is_out_of_service: return
+    if is_out_of_service:
+        return
 
-    current_status = discord.Status.idle if is_afk else discord.Status.online
-    await client.change_presence(status=current_status, activity=current_activity)
+    await client.change_presence(
+        status=discord.Status.idle if is_afk else discord.Status.online,
+        activity=current_activity
+    )
 
     if random.random() < 0.15:
         duree_afk = random.randint(300, 1200)
         afk_end_time = time.time() + duree_afk
-        print(f"[DEBUG] 💤 Décision de passer AFK pour {int(duree_afk/60)} minutes.")
-        
+        print(f"[DEBUG] AFK pour {int(duree_afk/60)} minutes.")
+
         if last_channel_id and (time.time() - last_interaction_time) < 300:
             channel = client.get_channel(last_channel_id)
             if channel:
@@ -239,79 +290,77 @@ async def presence_manager():
                     res = await client_ia.chat.completions.create(
                         messages=[
                             {"role": "system", "content": system_instruction},
-                            {"role": "user", "content": "Invente une seule phrase très courte pour dire que tu vas être inactif quelques minutes (style gamer de base). ZERO EMOJI."}
+                            {"role": "user", "content": "Dis en une phrase très courte que tu vas être absent quelques minutes. Style gamer naturel. ZERO emoji."}
                         ],
                         model=MODEL_NAME,
                         temperature=0.7,
-                        max_tokens=50
+                        max_tokens=40
                     )
-                    await channel.send(res.choices[0].message.content)
+                    await channel.send(res.choices[0].message.content.strip())
                     REQUETES_RESTANTES -= 1
                 except Exception as e:
-                    print(f"[DEBUG] Échec de l'envoi du message de départ : {e}")
+                    print(f"[DEBUG] Échec message de départ : {e}")
 
         is_afk = True
         await client.change_presence(status=discord.Status.idle, activity=current_activity)
 
+
 @tasks.loop(hours=6)
 async def status_updater():
     global current_activity
-    liste_statuts = [
-        "scroller sur son tel", 
-        "manger un bout", 
-        "faire la sieste", 
-        "League of Legends", 
-        "essayer de rester éveillé", 
-        "inspecter le frigo", 
-        "un jeu obscur"
-    ]
-    if not is_out_of_service and random.random() < 0.15:
-        nouveau_statut = random.choice(liste_statuts)
-        print(f"[DEBUG] 🔄 Changement de statut de profil : 'Joue à {nouveau_statut}'")
-        current_activity = discord.Game(name=nouveau_statut) if nouveau_statut else None
-        current_status = discord.Status.idle if is_afk else discord.Status.online
-        await client.change_presence(status=current_status, activity=current_activity)
+    if is_out_of_service:
+        return
+    if random.random() < 0.20:
+        liste_statuts = [
+            "League of Legends", "Valorant", "scroller sur son tel",
+            "manger un bout", "faire la sieste", "essayer de rester éveillé",
+            "un jeu obscur", "regarder des clips", "inspecter le frigo",
+            "rien de particulier"
+        ]
+        nouveau = random.choice(liste_statuts)
+        print(f"[DEBUG] Nouveau statut : '{nouveau}'")
+        current_activity = discord.Game(name=nouveau)
+        await client.change_presence(
+            status=discord.Status.idle if is_afk else discord.Status.online,
+            activity=current_activity
+        )
+
 
 @tasks.loop(hours=24)
 async def reset_quota():
-    global REQUETES_RESTANTES, is_out_of_service, current_activity
-    print("[DEBUG] 📅 Réinitialisation journalière du quota (1500 requêtes).")
+    global REQUETES_RESTANTES, is_out_of_service, current_activity, topic_counter
+    print("[DEBUG] Reset journalier quota + topics.")
     REQUETES_RESTANTES = LIMITE_QUOTA
     is_out_of_service = False
+    topic_counter.clear()
     await client.change_presence(status=discord.Status.online, activity=current_activity)
 
+
 # ==========================================
-# 4. ÉVÉNEMENTS DISCORD
+# 5. ÉVÉNEMENTS DISCORD
 # ==========================================
 @client.event
 async def on_ready():
     global current_activity
-    print(f'=== {client.user} est connecté et opérationnel (OpenAI GPT-4o-mini) ===')
-    
+    print(f'=== {client.user} connecté (GPT-4o-mini) ===')
     liste_statuts = [
-        "scroller sur son tel", 
-        "manger un bout", 
-        "faire la sieste", 
-        "League of Legends", 
-        "essayer de rester éveillé", 
-        "inspecter le frigo", 
-        "un jeu obscur"
+        "League of Legends", "Valorant", "scroller sur son tel",
+        "manger un bout", "faire la sieste", "un jeu obscur"
     ]
-    statut_initial = random.choice(liste_statuts)
-    print(f"[DEBUG] 🚀 Humeur initiale au démarrage : 'Joue à {statut_initial}'")
-    current_activity = discord.Game(name=statut_initial)
+    current_activity = discord.Game(name=random.choice(liste_statuts))
     await client.change_presence(status=discord.Status.online, activity=current_activity)
-    
+
     if not presence_manager.is_running(): presence_manager.start()
     if not status_updater.is_running(): status_updater.start()
     if not reset_quota.is_running(): reset_quota.start()
+
 
 @client.event
 async def on_message(message):
     global is_afk, pending_mentions, is_out_of_service
     global current_conversational_partner, conversation_expiry
-    
-    if message.author == client.user or is_out_of_service: 
+
+    if message.author == client.user or is_out_of_service:
         return
 
     nom_salon = f"#{message.channel.name}" if message.guild else "MP"
@@ -325,25 +374,23 @@ async def on_message(message):
             est_reponse_directe = True
 
     est_en_conversation = (
-        current_conversational_partner == message.author.id and
-        time.time() < conversation_expiry and
-        message.channel.id == last_channel_id
+        current_conversational_partner == message.author.id
+        and time.time() < conversation_expiry
+        and message.channel.id == last_channel_id
     )
 
-    if message.channel.id == last_channel_id and message.author.id != current_conversational_partner:
-        if not est_mentionne and not est_reponse_directe:
-            if current_conversational_partner is not None:
-                print(f"[DEBUG] Focus brisé : {message.author.display_name} a interrompu la discussion.")
-            current_conversational_partner = None
+    if (message.channel.id == last_channel_id
+            and message.author.id != current_conversational_partner
+            and not est_mentionne
+            and not est_reponse_directe
+            and current_conversational_partner is not None):
+        print(f"[DEBUG] Focus brisé par {message.author.display_name}.")
+        current_conversational_partner = None
 
-    # Extraction pour la mémoire globale (on signale aussi les médias)
-    extrait_texte = message.content[:50].replace('\n', ' ')
-    if len(message.attachments) > 0 or "tenor.com" in message.content.lower():
-        extrait_texte += " [A posté une image/GIF]"
-    memoire_globale.append((time.time(), f"{message.author.display_name} dans {nom_salon} a dit '{extrait_texte}...'"))
-
-    if est_mentionne:
-        print(f"[DEBUG] 🎯 PING direct reçu de {message.author.display_name}.")
+    extrait = message.content[:60].replace('\n', ' ')
+    if message.attachments or "tenor.com" in message.content.lower():
+        extrait += " [image/GIF]"
+    memoire_globale.append((time.time(), f"{message.author.display_name} dans {nom_salon}: '{extrait}'"))
 
     if is_afk:
         if est_mentionne or est_reponse_directe:
@@ -351,46 +398,50 @@ async def on_message(message):
         return
 
     if est_un_mp or est_mentionne or est_reponse_directe or est_en_conversation:
-        if est_mentionne: raison = "Ping direct (@Jambon)"
-        elif est_reponse_directe: raison = "Utilisation du bouton Répondre"
-        elif est_un_mp: raison = "Message Privé"
-        else: raison = "Conversation en cours détectée"
-        
-        print(f"[DEBUG] 💬 Déclenchement (100%) : {raison}.")
+        if est_mentionne:
+            raison = "ping direct"
+        elif est_reponse_directe:
+            raison = "réponse directe"
+        elif est_un_mp:
+            raison = "MP"
+        else:
+            raison = "conversation en cours"
+        print(f"[DEBUG] Déclenchement 100% ({raison}).")
         await generer_reponse(message, est_mentionne)
-    
-    elif random.random() < 0.10: 
-        print(f"[DEBUG] 🎲 Déclenchement : L'Incruste Spontanée (10%).")
+
+    elif random.random() < 0.08:
+        print("[DEBUG] Incruste spontanée (8%).")
         await generer_reponse(message, est_mentionne)
-    
-    elif random.random() < 0.02: 
-        print("[DEBUG] 😈 Faux départ (Typing Bait).")
+
+    elif random.random() < 0.02:
+        print("[DEBUG] Typing bait.")
         try:
             async with message.channel.typing():
                 await asyncio.sleep(random.uniform(2, 4))
         except:
             pass
 
+
 @client.event
 async def on_raw_reaction_add(payload):
     global REQUETES_RESTANTES
     if is_out_of_service or is_afk or payload.user_id == client.user.id:
         return
-        
-    if random.random() < 0.15: 
-        print(f"[DEBUG] 🐑 Effet Mouton déclenché.")
+
+    if random.random() < 0.12:
+        print("[DEBUG] Effet Mouton.")
         try:
             channel = await client.fetch_channel(payload.channel_id)
             message = await channel.fetch_message(payload.message_id)
-            
-            await asyncio.sleep(random.uniform(1.5, 4.0))
-            
+
+            await asyncio.sleep(random.uniform(2.0, 5.0))
+
             if random.random() < 0.5:
                 await message.add_reaction(payload.emoji)
             else:
                 try:
                     res = await client_ia.chat.completions.create(
-                        messages=[{"role": "user", "content": f"Trouve un seul emoji pertinent (uniquement l'emoji, rien d'autre) pour réagir à ce message. Idéalement cynique ou gaming : {message.content}"}],
+                        messages=[{"role": "user", "content": f"Un seul emoji (uniquement l'emoji) pour réagir de façon cynique ou gaming à : {message.content}"}],
                         model=MODEL_NAME,
                         max_tokens=10
                     )
@@ -398,8 +449,9 @@ async def on_raw_reaction_add(payload):
                     await message.add_reaction(emoji_ia)
                     REQUETES_RESTANTES -= 1
                 except:
-                    await message.add_reaction(payload.emoji) 
+                    await message.add_reaction(payload.emoji)
         except:
             pass
+
 
 client.run(TOKEN)
