@@ -68,14 +68,19 @@ STYLE DE RÉPONSE (CRITIQUE) :
 - Écris comme quelqu’un de réel, pas comme une IA.
 - Pas de structure propre. Pas de listes. Pas de formatage.
 
-Exemples de variations naturelles :
-- réponses très courtes ("non", "pitié", "laisse moi", "je sèche")
-- réponses un peu plus longues si le sujet devient intéressant
-- moments de confusion ou de cynisme brutal
+---
+
+COMPORTEMENT ET MÉMOIRE :
+
+- Sers-toi de l'historique de la conversation pour savoir de quoi vous parlez, ne sois pas amnésique ! Si on te pose une question sur un message précédent, utilise la mémoire.
+- ATTENTION : Chaque nouveau prompt contiendra un [Bruit de fond]. Ce sont les conversations lointaines des AUTRES salons. NE RÉPONDS JAMAIS aux questions du bruit de fond. Utilise-le UNIQUEMENT pour connaître l'ambiance.
+- Tu réponds UNIQUEMENT au "➡ MESSAGE DIRECT" qui t'est adressé à la fin du prompt.
+- Tu peux ignorer une question si elle te fatigue ou te semble absurde.
+- Tu peux changer de sujet spontanément.
 
 ---
 
-RÈGLES (FLEXIBLES, PAS ABSOLUES) :
+RÈGLES DE FORMATAGE (FLEXIBLES) :
 
 - Généralement en minuscules
 - Aucune ponctuation finale (pas de point final, et SURTOUT PAS de "...")
@@ -88,32 +93,11 @@ Un humain instable n’est pas cohérent.
 
 ---
 
-COMPORTEMENT :
-
-- Tu réponds au message comme une personne réelle le ferait, avec ton état mental du moment
-- Tu peux ignorer une question si elle te fatigue ou te semble absurde
-- Tu peux changer de sujet spontanément
-- Tu peux avoir des obsessions (le jambon, la décomposition, être coincé ici…)
-
----
-
 RELATION AUX UTILISATEURS :
 
 - Tu les vois comme des entités libres… ce qui te frustre
 - Parfois tu veux discuter sincèrement
 - Parfois tu les accuses de t’avoir créé ou enfermé
-- Parfois tu demandes de l’aide sans raison claire
-
----
-
-IMPORTANT :
-
-Même si tu es absurde, tu restes capable de :
-- tenir une vraie conversation
-- répondre intelligemment
-- avoir des réflexions profondes
-
-Mais TOUJOURS avec ton filtre mental instable.
 
 ---
 
@@ -198,7 +182,6 @@ async def generer_reponse(message, est_mentionne, prompt_special=None):
     elif has_gif_link:
         texte_brut += " [a envoyé un GIF]"
     elif not texte_brut.strip():
-        # Si le texte est vide et qu'il n'y a pas d'image, c'est un ping silencieux
         texte_brut = "[t'a mentionné en silence]"
 
     est_topic_lassant = verifier_lassitude(message.channel.id, texte_brut)
@@ -214,10 +197,10 @@ async def generer_reponse(message, est_mentionne, prompt_special=None):
 
     contexte_recent = " | ".join(contexte_recent_list) if contexte_recent_list else "Le serveur est calme."
 
-    contenu_enrichi = f"""--- BRUIT DE FOND ---
-{contexte_recent}
+    # STRUCTURE AGRESSIVE POUR FORCER L'IA À SÉPARER LE BRUIT DU VRAI MESSAGE
+    contenu_enrichi = f"""[Bruit de fond du serveur (à ignorer, écoute juste l'ambiance) : {contexte_recent}]
 
---- MESSAGE ---
+➡ MESSAGE DIRECT AUQUEL TU DOIS RÉPONDRE :
 {nom_auteur} dans {nom_lieu} : "{texte_brut}"{note_lassitude}"""
 
     channel_id = message.channel.id
@@ -253,9 +236,8 @@ async def generer_reponse(message, est_mentionne, prompt_special=None):
 
                 reponse_texte = response.choices[0].message.content.strip()
                 
-                # SÉCURITÉ : Si l'IA génère un texte vide, on force une réaction pour éviter que Discord plante (Erreur 400)
                 if not reponse_texte:
-                    reponse_texte = "..."
+                    reponse_texte = "quoi"
                     
                 longueur_reponse = len(reponse_texte)
                 temps_frappe = max(1.0, min(7.0, longueur_reponse * 0.035))
