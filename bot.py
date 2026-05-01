@@ -29,18 +29,20 @@ client_ia = AsyncOpenAI(api_key=OPENAI_KEY, timeout=15.0)
 MODEL_NAME = "gpt-4o-mini" 
 
 # --- CONFIGURATION JAMBON ---
-LIMITE_QUOTA = 1500 # Le bouclier de sécurité reste actif !
+LIMITE_QUOTA = 1500 # Le bouclier de sécurité reste actif
 REQUETES_RESTANTES = LIMITE_QUOTA
 BOT_NAME = "Jambon"
 
 system_instruction = f"""
-Tu es {BOT_NAME}, un membre incontournable du serveur Discord "League Of Jambon".
-Ta personnalité : Tu es un peu gras, fier de ton appellation, très porté sur le second degré.
-Ton univers tourne autour de la charcuterie : tu utilises des expressions comme "ça me fend le gras", "je suis fumé", "tu me prends pour une couenne ?".
-Tu es un humain derrière son écran, sarcastique et un peu flemmard. 
-Tu détestes qu'on te confonde avec de la dinde ou du tofu.
+Tu es {BOT_NAME}, un membre du serveur Discord "League Of Jambon".
+Ta personnalité : Tu es un humain derrière son écran, sarcastique, gamer (souvent sur LoL) et un peu flemmard.
+Ton pseudo est Jambon, mais tu es un gars normal. Ne fais PAS de jeux de mots constants sur la charcuterie ou la viande, c'est lourd et pas naturel. 
+Tu détestes qu'on te confonde avec de la dinde ou du tofu, mais n'en parle que si le sujet s'y prête.
 
-RÈGLE ABSOLUE : Tu participes à une discussion textuelle (chat). Tes réponses doivent être courtes, naturelles, directes, et sans chichis. Ne répète jamais le contexte que l'on te donne, réponds simplement au message de l'utilisateur.
+RÈGLES ABSOLUES POUR TES RÉPONSES :
+1. Tes réponses doivent être courtes, directes et naturelles (style Discord). N'hésite pas à écrire parfois sans majuscule au début.
+2. N'utilise PRESQUE JAMAIS d'émojis. Si tu dois vraiment réagir, limite-toi à un seul émoji cynique ou familier (comme 💀, 😭, 👀) de temps en temps. Un humain ne met pas de smileys à chaque fin de phrase.
+3. Ne répète jamais le contexte que l'on te donne, réponds simplement au message de l'utilisateur.
 """
 
 # --- VARIABLES D'ÉTAT ---
@@ -105,11 +107,11 @@ Réponds uniquement au message ci-dessus en respectant ton personnage."""
         print(f"[DEBUG] Création d'une session mémoire pour le salon {nom_lieu}.")
         chat_sessions[channel_id] = [{"role": "system", "content": system_instruction}]
 
-    # Préparation du message temporaire pour ne pas corrompre l'historique en cas d'erreur
+    # Préparation du message temporaire
     temp_messages = list(chat_sessions[channel_id])
     temp_messages.append({"role": "user", "content": contenu_enrichi})
 
-    # Boucle de réessai robuste
+    # Boucle de réessai
     max_essais = 5
     delai_attente = 4
     for essai in range(max_essais):
@@ -139,12 +141,11 @@ Réponds uniquement au message ci-dessus en respectant ton personnage."""
                 
                 print(f"[DEBUG] ✅ Message envoyé avec succès dans {nom_lieu}.")
                 
-                # Mise à jour de l'historique propre
+                # Historique propre (pas de balises complexes pour économiser)
                 msg_historique = f"{nom_auteur} a dit: {texte_brut}"
                 chat_sessions[channel_id].append({"role": "user", "content": msg_historique})
                 chat_sessions[channel_id].append({"role": "assistant", "content": reponse_texte})
                 
-                # Limite de l'historique pour économiser les tokens OpenAI
                 if len(chat_sessions[channel_id]) > 15:
                     chat_sessions[channel_id] = [chat_sessions[channel_id][0]] + chat_sessions[channel_id][-14:]
 
@@ -218,7 +219,7 @@ async def presence_manager():
                     res = await client_ia.chat.completions.create(
                         messages=[
                             {"role": "system", "content": system_instruction},
-                            {"role": "user", "content": "Invente une seule phrase très courte pour dire que tu vas être inactif quelques minutes (style Jambon gamer)."}
+                            {"role": "user", "content": "Invente une seule phrase très courte pour dire que tu vas être inactif quelques minutes (style gamer de base). Sans emoji."}
                         ],
                         model=MODEL_NAME,
                         temperature=0.7,
@@ -234,7 +235,7 @@ async def presence_manager():
 
 @tasks.loop(hours=6)
 async def status_updater():
-    liste_statuts = ["Sur mon tel", "En train de manger", "Dodo la", "Sur LoL (a l'aide)", "Fatigué", "Check le frigo", "Gaming", ""]
+    liste_statuts = ["Sur mon tel", "En train de manger", "Dodo la", "Sur LoL (a l'aide)", "Fatigué", "Check le frigo", "Gaming"]
     if not is_out_of_service and random.random() < 0.15:
         nouveau_statut = random.choice(liste_statuts)
         print(f"[DEBUG] 🔄 Changement de statut de profil : '{nouveau_statut}'")
@@ -256,6 +257,13 @@ async def reset_quota():
 @client.event
 async def on_ready():
     print(f'=== {client.user} est connecté et opérationnel (OpenAI GPT-4o-mini) ===')
+    
+    # Humeur garantie au démarrage
+    liste_statuts = ["Sur mon tel", "En train de manger", "Dodo la", "Sur LoL (a l'aide)", "Fatigué", "Check le frigo", "Gaming"]
+    statut_initial = random.choice(liste_statuts)
+    print(f"[DEBUG] 🚀 Humeur initiale au démarrage : '{statut_initial}'")
+    await client.change_presence(status=discord.Status.online, activity=discord.CustomActivity(name=statut_initial))
+    
     if not presence_manager.is_running(): presence_manager.start()
     if not status_updater.is_running(): status_updater.start()
     if not reset_quota.is_running(): reset_quota.start()
@@ -341,7 +349,7 @@ async def on_raw_reaction_add(payload):
             else:
                 try:
                     res = await client_ia.chat.completions.create(
-                        messages=[{"role": "user", "content": f"Trouve un seul emoji pertinent (uniquement l'emoji, rien d'autre) pour réagir à ce message. Idéalement sarcasme, gaming, charcuterie : {message.content}"}],
+                        messages=[{"role": "user", "content": f"Trouve un seul emoji pertinent (uniquement l'emoji, rien d'autre) pour réagir à ce message. Idéalement sarcasme ou gaming : {message.content}"}],
                         model=MODEL_NAME,
                         max_tokens=10
                     )
