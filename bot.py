@@ -190,11 +190,15 @@ async def generer_reponse(message, est_mentionne, prompt_special=None):
     has_gif_link = any(x in texte_brut.lower() for x in ["tenor.com", "giphy.com", ".gif"])
 
     if has_attachment:
-        texte_brut += " [a envoyé une image/pièce jointe]"
-    if has_gif_link:
+        if not texte_brut.strip():
+            texte_brut = "[a envoyé une image/pièce jointe sans texte]"
+        else:
+            texte_brut += " [a envoyé une image/pièce jointe]"
+    elif has_gif_link:
         texte_brut += " [a envoyé un GIF]"
-    if not texte_brut.strip():
-        texte_brut = "[a envoyé un fichier sans texte]"
+    elif not texte_brut.strip():
+        # Si le texte est vide et qu'il n'y a pas d'image, c'est un ping silencieux
+        texte_brut = "[t'a mentionné en silence]"
 
     est_topic_lassant = verifier_lassitude(message.channel.id, texte_brut)
     note_lassitude = "\n[Note interne : ce sujet est revenu plusieurs fois, montre de la lassitude ou change de sujet]" if est_topic_lassant else ""
