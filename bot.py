@@ -175,6 +175,11 @@ async def generer_reponse(message, est_mentionne, prompt_special=None):
                 )
 
                 reponse_texte = response.choices[0].message.content.strip()
+                
+                # SÉCURITÉ : Si l'IA génère un texte vide, on force une réaction pour éviter que Discord plante (Erreur 400)
+                if not reponse_texte:
+                    reponse_texte = "..."
+                    
                 longueur_reponse = len(reponse_texte)
                 temps_frappe = max(1.0, min(7.0, longueur_reponse * 0.035))
 
@@ -206,7 +211,7 @@ async def generer_reponse(message, est_mentionne, prompt_special=None):
         except Exception as e:
             erreur_str = str(e)
             print(f"[ERREUR] Essai {essai+1} échoué : {erreur_str}")
-            if any(x in erreur_str for x in ["RateLimitError", "APIConnectionError", "timeout", "503"]):
+            if any(x in erreur_str for x in ["RateLimitError", "APIConnectionError", "timeout", "503", "429"]):
                 if essai < max_essais - 1:
                     print(f"[DEBUG] Pause de {delai_attente}s avant retry.")
                     await asyncio.sleep(delai_attente)
@@ -216,6 +221,7 @@ async def generer_reponse(message, est_mentionne, prompt_special=None):
                     print("[ERREUR CRITIQUE] Abandon après tous les essais.")
                     break
             else:
+                print(f"[ERREUR CRITIQUE] Erreur inattendue, interruption de la boucle.")
                 break
 
 
@@ -269,7 +275,7 @@ async def presence_manager():
     if random.random() < 0.03:
         duree_afk = random.randint(300, 1200)
         afk_end_time = time.time() + duree_afk
-        print(f"[DEBUG] AFK pour {int(duree_afk/60)} minutes.")
+        print(f"[DEBUG] AFK activé silencieusement pour {int(duree_afk/60)} minutes.")
 
         if last_channel_id and (time.time() - last_interaction_time) < 300:
             channel = client.get_channel(last_channel_id)
@@ -381,7 +387,10 @@ async def on_message(message):
 
     if is_afk:
         if est_mentionne or est_reponse_directe:
+            print(f"[DEBUG] Jambon est actuellement AFK. Message de {message.author.display_name} mis en attente.")
             pending_mentions.append(message)
+        else:
+            print(f"[DEBUG] Message ignoré silencieusement (Jambon est AFK).")
         return
 
     if est_un_mp or est_mentionne or est_reponse_directe or est_en_conversation:
@@ -393,15 +402,15 @@ async def on_message(message):
             raison = "MP"
         else:
             raison = "conversation en cours"
-        print(f"[DEBUG] Déclenchement 100% ({raison}).")
+        print(f"[DEBUG] Déclenchement 100% ({raison}) suite au message de {message.author.display_name}.")
         await generer_reponse(message, est_mentionne)
 
     elif random.random() < 0.08:
-        print("[DEBUG] Incruste spontanée (8%).")
+        print(f"[DEBUG] Incruste spontanée (8%) déclenchée sur le message de {message.author.display_name}.")
         await generer_reponse(message, est_mentionne)
 
     elif random.random() < 0.02:
-        print("[DEBUG] Typing bait.")
+        print(f"[DEBUG] Typing bait (faux départ) déclenché sur le message de {message.author.display_name}.")
         try:
             async with message.channel.typing():
                 await asyncio.sleep(random.uniform(2, 4))
