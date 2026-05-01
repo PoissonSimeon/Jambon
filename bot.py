@@ -35,14 +35,15 @@ BOT_NAME = "Jambon"
 
 system_instruction = f"""
 Tu es {BOT_NAME}, un membre du serveur Discord "League Of Jambon".
-Ta personnalité : Tu es un humain derrière son écran, sarcastique, gamer (souvent sur LoL) et un peu flemmard.
-Ton pseudo est Jambon, mais tu es un gars normal. Ne fais PAS de jeux de mots constants sur la charcuterie ou la viande, c'est lourd et pas naturel. 
-Tu détestes qu'on te confonde avec de la dinde ou du tofu, mais n'en parle que si le sujet s'y prête.
+Ta personnalité : Tu es un humain derrière son écran, un peu sarcastique, gamer et flemmard.
+Ton pseudo est Jambon, mais tu es un gars normal. Ne fais AUCUN jeu de mots ou blague sur la charcuterie ou la viande, c'est lourd.
 
 RÈGLES ABSOLUES POUR TES RÉPONSES :
-1. Tes réponses doivent être courtes, directes et naturelles (style Discord). N'hésite pas à écrire parfois sans majuscule au début.
-2. N'utilise PRESQUE JAMAIS d'émojis. Si tu dois vraiment réagir, limite-toi à un seul émoji cynique ou familier (comme 💀, 😭, 👀) de temps en temps. Un humain ne met pas de smileys à chaque fin de phrase.
-3. Ne répète jamais le contexte que l'on te donne, réponds simplement au message de l'utilisateur.
+1. ZERO EMOJI. Il t'est formellement interdit d'utiliser des émojis ou des smileys dans tes messages texte. Un gamer sur Discord n'en met presque jamais. Ne triche pas.
+2. ADAPTE TON TON : Analyse le "Bruit de fond" et le message de l'utilisateur pour calquer ton humeur sur la leur. Si la discussion est sérieuse, réponds sérieusement. Si ça trolle, sois cynique. Inclus-toi naturellement dans le flux de la conversation.
+3. Tes réponses doivent être courtes, directes et naturelles (style Discord). Pas de fioritures, tu peux écrire sans majuscule au début.
+4. Ne répète jamais le contexte que l'on te donne, réponds simplement au message de l'utilisateur.
+5. IMAGES ET GIFS : Si on t'envoie un GIF ou une image, tu ne peux pas le voir. Agis comme si ton Discord buggait ("ça charge pas ton truc", "j'ai pas l'image"), ou réagis de manière sarcastique à l'aveugle. Ne dis JAMAIS que tu es une IA aveugle.
 """
 
 # --- VARIABLES D'ÉTAT ---
@@ -50,6 +51,7 @@ is_afk = False
 afk_end_time = 0 
 is_out_of_service = False
 pending_mentions = []
+current_activity = None 
 
 # Variables pour la mémorisation de la conversation (Tête-à-tête)
 last_channel_id = None
@@ -82,6 +84,20 @@ async def generer_reponse(message, est_mentionne, prompt_special=None):
     nom_lieu = f"#{message.channel.name}" if message.guild else "MP"
     texte_brut = prompt_special if prompt_special else message.content.replace(f'<@{client.user.id}>', '').strip()
     
+    # === NOUVEAU : DÉTECTION DES IMAGES ET GIFS ===
+    has_attachment = len(message.attachments) > 0
+    has_gif_link = "tenor.com" in texte_brut.lower() or "giphy.com" in texte_brut.lower() or ".gif" in texte_brut.lower()
+
+    if has_attachment:
+        texte_brut += " [Note de contexte : a envoyé une image/pièce jointe]"
+    if has_gif_link:
+        texte_brut += " [Note de contexte : a envoyé un GIF animé]"
+        
+    # Si le message n'était *que* une image sans texte, on s'assure qu'il n'est pas vide
+    if not texte_brut.strip():
+        texte_brut = "[A envoyé un fichier média sans texte]"
+    # ==============================================
+
     contexte_recent_list = []
     maintenant = time.time()
     for timestamp, msg_texte in memoire_globale:
@@ -141,7 +157,7 @@ Réponds uniquement au message ci-dessus en respectant ton personnage."""
                 
                 print(f"[DEBUG] ✅ Message envoyé avec succès dans {nom_lieu}.")
                 
-                # Historique propre (pas de balises complexes pour économiser)
+                # Historique propre
                 msg_historique = f"{nom_auteur} a dit: {texte_brut}"
                 chat_sessions[channel_id].append({"role": "user", "content": msg_historique})
                 chat_sessions[channel_id].append({"role": "assistant", "content": reponse_texte})
@@ -179,12 +195,13 @@ Réponds uniquement au message ci-dessus en respectant ton personnage."""
 @tasks.loop(minutes=1)
 async def presence_manager():
     global is_afk, afk_end_time, pending_mentions, last_channel_id, last_interaction_time, REQUETES_RESTANTES, is_out_of_service
+    global current_activity
     
     if is_afk:
         if time.time() >= afk_end_time:
             print("[DEBUG] ⏰ Fin de l'AFK. Jambon est de retour !")
             is_afk = False
-            await client.change_presence(status=discord.Status.online)
+            await client.change_presence(status=discord.Status.online, activity=current_activity)
             
             if pending_mentions:
                 print(f"[DEBUG] Traitement des mentions accumulées pendant l'AFK...")
@@ -199,13 +216,16 @@ async def presence_manager():
         if last_channel_id and (time.time() - last_interaction_time) < 300:
             channel = client.get_channel(last_channel_id)
             if channel:
-                await channel.send("Bon, j'ai plus de jus là, je vais me faire fumer au frais. À plus les couennes.")
+                await channel.send("bon, j'ai plus de jus là, à plus")
         
         is_out_of_service = True
         await client.change_presence(status=discord.Status.offline)
         return
 
     if is_out_of_service: return
+
+    current_status = discord.Status.idle if is_afk else discord.Status.online
+    await client.change_presence(status=current_status, activity=current_activity)
 
     if random.random() < 0.15:
         duree_afk = random.randint(300, 1200)
@@ -219,7 +239,7 @@ async def presence_manager():
                     res = await client_ia.chat.completions.create(
                         messages=[
                             {"role": "system", "content": system_instruction},
-                            {"role": "user", "content": "Invente une seule phrase très courte pour dire que tu vas être inactif quelques minutes (style gamer de base). Sans emoji."}
+                            {"role": "user", "content": "Invente une seule phrase très courte pour dire que tu vas être inactif quelques minutes (style gamer de base). ZERO EMOJI."}
                         ],
                         model=MODEL_NAME,
                         temperature=0.7,
@@ -231,14 +251,14 @@ async def presence_manager():
                     print(f"[DEBUG] Échec de l'envoi du message de départ : {e}")
 
         is_afk = True
-        await client.change_presence(status=discord.Status.idle)
+        await client.change_presence(status=discord.Status.idle, activity=current_activity)
 
 @tasks.loop(hours=6)
 async def status_updater():
-    # LISTE MODIFIÉE POUR DISCORD.GAME ("Joue à...")
+    global current_activity
     liste_statuts = [
         "scroller sur son tel", 
-        "manger du saucisson", 
+        "manger un bout", 
         "faire la sieste", 
         "League of Legends", 
         "essayer de rester éveillé", 
@@ -248,30 +268,29 @@ async def status_updater():
     if not is_out_of_service and random.random() < 0.15:
         nouveau_statut = random.choice(liste_statuts)
         print(f"[DEBUG] 🔄 Changement de statut de profil : 'Joue à {nouveau_statut}'")
-        # Utilisation de discord.Game pour forcer l'affichage sur tous les clients Discord
-        activity = discord.Game(name=nouveau_statut) if nouveau_statut else None
+        current_activity = discord.Game(name=nouveau_statut) if nouveau_statut else None
         current_status = discord.Status.idle if is_afk else discord.Status.online
-        await client.change_presence(status=current_status, activity=activity)
+        await client.change_presence(status=current_status, activity=current_activity)
 
 @tasks.loop(hours=24)
 async def reset_quota():
-    global REQUETES_RESTANTES, is_out_of_service
+    global REQUETES_RESTANTES, is_out_of_service, current_activity
     print("[DEBUG] 📅 Réinitialisation journalière du quota (1500 requêtes).")
     REQUETES_RESTANTES = LIMITE_QUOTA
     is_out_of_service = False
-    await client.change_presence(status=discord.Status.online)
+    await client.change_presence(status=discord.Status.online, activity=current_activity)
 
 # ==========================================
 # 4. ÉVÉNEMENTS DISCORD
 # ==========================================
 @client.event
 async def on_ready():
+    global current_activity
     print(f'=== {client.user} est connecté et opérationnel (OpenAI GPT-4o-mini) ===')
     
-    # Humeur garantie au démarrage avec discord.Game
     liste_statuts = [
         "scroller sur son tel", 
-        "manger du saucisson", 
+        "manger un bout", 
         "faire la sieste", 
         "League of Legends", 
         "essayer de rester éveillé", 
@@ -280,7 +299,8 @@ async def on_ready():
     ]
     statut_initial = random.choice(liste_statuts)
     print(f"[DEBUG] 🚀 Humeur initiale au démarrage : 'Joue à {statut_initial}'")
-    await client.change_presence(status=discord.Status.online, activity=discord.Game(name=statut_initial))
+    current_activity = discord.Game(name=statut_initial)
+    await client.change_presence(status=discord.Status.online, activity=current_activity)
     
     if not presence_manager.is_running(): presence_manager.start()
     if not status_updater.is_running(): status_updater.start()
@@ -316,7 +336,10 @@ async def on_message(message):
                 print(f"[DEBUG] Focus brisé : {message.author.display_name} a interrompu la discussion.")
             current_conversational_partner = None
 
-    extrait_texte = message.content[:50].replace('\n', ' ') 
+    # Extraction pour la mémoire globale (on signale aussi les médias)
+    extrait_texte = message.content[:50].replace('\n', ' ')
+    if len(message.attachments) > 0 or "tenor.com" in message.content.lower():
+        extrait_texte += " [A posté une image/GIF]"
     memoire_globale.append((time.time(), f"{message.author.display_name} dans {nom_salon} a dit '{extrait_texte}...'"))
 
     if est_mentionne:
@@ -367,7 +390,7 @@ async def on_raw_reaction_add(payload):
             else:
                 try:
                     res = await client_ia.chat.completions.create(
-                        messages=[{"role": "user", "content": f"Trouve un seul emoji pertinent (uniquement l'emoji, rien d'autre) pour réagir à ce message. Idéalement sarcasme ou gaming : {message.content}"}],
+                        messages=[{"role": "user", "content": f"Trouve un seul emoji pertinent (uniquement l'emoji, rien d'autre) pour réagir à ce message. Idéalement cynique ou gaming : {message.content}"}],
                         model=MODEL_NAME,
                         max_tokens=10
                     )
