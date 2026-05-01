@@ -61,8 +61,8 @@ PERSONNALITÉ :
 STYLE DE RÉPONSE (CRITIQUE) :
 
 - ULTRA-COURT : Tes réponses doivent faire entre 1 et 15 mots maximum la plupart du temps.
+- FINIS TES PHRASES : Sois bref, mais ne te coupe jamais au milieu d'un mot ou d'une idée.
 - AUCUN RETOUR À LA LIGNE : N'écris jamais plusieurs paragraphes. Fais un seul petit bloc de texte.
-- Un humain blasé et un jambon désespéré ne font pas de longs monologues théâtraux. Garde ton angoisse brève et percutante.
 - Écris comme quelqu’un de réel, pas comme une IA.
 - Pas de structure propre. Pas de listes. Pas de formatage.
 - Les phrases peuvent être bancales, interrompues, hésitantes.
@@ -160,13 +160,13 @@ def verifier_lassitude(channel_id, texte):
 def choisir_max_tokens():
     r = random.random()
     if r < 0.50:
-        return 15   # 50% du temps : ultra court (quelques mots max)
+        return 40   # 50% du temps : Assez d'air pour finir une phrase courte proprement sans couper
     elif r < 0.85:
-        return 35   # 35% du temps : une phrase
+        return 80   # 35% du temps : une phrase moyenne
     elif r < 0.95:
-        return 60   # 10% du temps : deux phrases
+        return 150  # 10% du temps : deux phrases
     else:
-        return 100  # 5% du temps : "long" (mais physiquement incapable de faire un pavé)
+        return 250  # 5% du temps : "long" (mais il se limitera via ses consignes)
 
 
 # ==========================================
